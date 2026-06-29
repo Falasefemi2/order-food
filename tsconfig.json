@@ -15,6 +15,9 @@
 		"incremental": true,
 		"plugins": [
 			{
+				"name": "@effect/language-service"
+			},
+			{
 				"name": "next"
 			}
 		],

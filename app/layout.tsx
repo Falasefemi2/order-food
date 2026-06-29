@@ -1,6 +1,7 @@
 import { Geist, Geist_Mono, Lora } from "next/font/google";
 
 import "./globals.css";
+import type { Metadata } from "next";
 import { ThemeProvider } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,12 @@ const fontMono = Geist_Mono({
 	subsets: ["latin"],
 	variable: "--font-mono",
 });
+
+export const metadata: Metadata = {
+	title: "Foodie",
+	description:
+		"Discover local restaurants, browse menus, order your favorite meals, and enjoy fast, reliable food delivery.",
+};
 
 export default function RootLayout({
 	children,
