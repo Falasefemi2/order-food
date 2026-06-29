@@ -4,6 +4,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
+[data-sonner-toast] [data-description] {
+  color: #000000 !important;
+}
+
 @theme inline {
     --font-heading: var(--font-serif);
     --font-serif: var(--font-serif);

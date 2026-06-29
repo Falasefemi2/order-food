@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Lora } from "next/font/google";
 import "./globals.css";
 import type { Metadata } from "next";
 import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 
 const lora = Lora({ subsets: ["latin"], variable: "--font-serif" });
@@ -41,7 +42,8 @@ export default function RootLayout({
 			)}
 		>
 			<body>
-				<ThemeProvider>{children}</ThemeProvider>
+				<main>{children}</main>
+<Toaster />
 			</body>
 		</html>
 	);

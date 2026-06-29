@@ -16,7 +16,7 @@ export function Navbar() {
 	};
 
 	const navLinks: NavLink[] = [
-		{ label: "Drivers", href: "/drivers" },
+		{ label: "Drivers", href: "/riders" },
 		{ label: "Restaurants", href: "/restaurants" },
 		{ label: "Vendors", href: "/vendors" },
 	];
