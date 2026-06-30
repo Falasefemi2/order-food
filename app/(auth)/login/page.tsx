@@ -6,9 +6,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Field, FieldGroup, FieldLabel, FieldSet } from "@/components/ui/field";
 import { loginAndRedirect } from "@/lib/auth-direction";
 
 export default function LoginPage() {

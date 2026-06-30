@@ -10,15 +10,15 @@ import {
 	TrendingUp,
 } from "lucide-react";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import {
 	Accordion,
 	AccordionContent,
 	AccordionItem,
 	AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 
 const stats = [
 	{ value: "5,000+", label: "Active riders" },

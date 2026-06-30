@@ -25,12 +25,14 @@ import type { PublicRestaurantDetail } from "@/lib/types";
 
 interface RestaurantDetailClientProps {
 	restaurant: PublicRestaurantDetail;
+	basePath?: string;
 }
 
 type MenuItem = PublicRestaurantDetail["categories"][0]["items"][0];
 
 export function RestaurantDetailClient({
 	restaurant,
+	basePath = "/restaurants",
 }: RestaurantDetailClientProps) {
 	const router = useRouter();
 	const [activeCategory, setActiveCategory] = useState(
@@ -97,7 +99,7 @@ export function RestaurantDetailClient({
 				<Button
 					variant="secondary"
 					size="icon"
-					onClick={() => router.back()}
+					onClick={() => router.push(basePath)}
 					className="absolute top-4 left-4 rounded-full bg-white/90 backdrop-blur-sm shadow-md hover:bg-white"
 				>
 					<ChevronLeft size={18} />

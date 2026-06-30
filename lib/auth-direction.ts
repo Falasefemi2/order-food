@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
-import { runtime } from "./runtime";
 import { AuthApi } from "./auth/auth-api";
+import { runtime } from "./runtime";
 
 export const redirectByRole = (role: string, router: AppRouterInstance) => {
 	switch (role) {

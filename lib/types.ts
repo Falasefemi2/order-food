@@ -14,8 +14,10 @@ export const UserProfile = Schema.Struct({
 	lastName: Schema.String,
 	role: Schema.String,
 	walletBalance: Schema.String,
+	avatarUrl: Schema.NullOr(Schema.String),
 	createdAt: Schema.String,
 });
+
 export type UserProfile = typeof UserProfile.Type;
 
 export class ApiError extends Schema.TaggedErrorClass<ApiError>()("ApiError", {
