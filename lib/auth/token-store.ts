@@ -39,8 +39,8 @@ export class TokenService extends Context.Service<
 					refreshToken: string;
 				}) =>
 					Effect.gen(function* () {
-yield* Ref.set(accessRef, accessToken);   // ← the actual token value
-yield* Ref.set(refreshRef, refreshToken); // ← the actual token value
+						yield* Ref.set(accessRef, accessToken); // ← the actual token value
+						yield* Ref.set(refreshRef, refreshToken); // ← the actual token value
 						if (typeof window !== "undefined") {
 							localStorage.setItem("accessToken", accessToken);
 							localStorage.setItem("refreshToken", refreshToken);

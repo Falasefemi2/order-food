@@ -16,6 +16,7 @@ interface RestaurantCardProps {
 	estimatedPrepTime: number;
 	isOpen: boolean;
 	deliveryFee?: string;
+	basePath?: string;
 }
 
 export function RestaurantCard({
@@ -29,9 +30,10 @@ export function RestaurantCard({
 	estimatedPrepTime,
 	isOpen,
 	deliveryFee = "₦500",
+	basePath = "/restaurants",
 }: RestaurantCardProps) {
 	return (
-		<Link href={`/restaurants/${id}`} className="block group">
+		<Link href={`${basePath}/${id}`} className="block group">
 			<Card className="overflow-hidden border-border/60 transition-shadow duration-200 hover:shadow-md rounded-2xl py-0">
 				{/* Banner */}
 				<div className="relative h-44 bg-muted overflow-hidden">
@@ -69,7 +71,6 @@ export function RestaurantCard({
 					)}
 				</div>
 
-				{/* Info */}
 				<CardContent className="p-4">
 					<h3 className="font-bold text-foreground text-base leading-tight line-clamp-1">
 						{name}
@@ -80,7 +81,6 @@ export function RestaurantCard({
 						</p>
 					)}
 
-					{/* Meta row */}
 					<div className="flex items-center gap-2 mt-3 text-sm text-muted-foreground">
 						<div className="flex items-center gap-1">
 							<Star size={13} className="text-yellow-400 fill-yellow-400" />

@@ -5,9 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { registerAndRedirect } from "@/lib/auth-direction";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
 	Field,
 	FieldDescription,
@@ -15,6 +13,8 @@ import {
 	FieldLabel,
 	FieldSet,
 } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { registerAndRedirect } from "@/lib/auth-direction";
 
 type Role = "customer" | "vendor" | "driver";
 
