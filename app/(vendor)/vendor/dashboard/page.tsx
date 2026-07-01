@@ -1,5 +1,6 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import {
 	Building2,
@@ -10,7 +11,7 @@ import {
 	UtensilsCrossed,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
 import { Badge } from "@/components/ui/badge";
@@ -18,174 +19,175 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { AuthApi } from "@/lib/auth/auth-api";
-import type { UserProfile } from "@/lib/auth/auth-schema";
-import { OrderApi, type OrderSummaryResponseType } from "@/lib/order-api";
-import {
-	RestaurantApi,
-	type RestaurantResponseType,
-} from "@/lib/restaurant-api";
-import { runtime } from "@/lib/runtime";
+import { OrderApi } from "@/lib/order-api";
+import { queryKeys } from "@/lib/queryKeys";
+import { RestaurantApi } from "@/lib/restaurant-api";
+import { runApi } from "@/lib/runtime";
 
 export default function VendorDashboardPage() {
-	const [user, setUser] = useState<UserProfile | null>(null);
-	const [restaurant, setRestaurant] = useState<RestaurantResponseType | null>(
-		null,
-	);
-	const [orders, setOrders] = useState<readonly OrderSummaryResponseType[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [ordersLoading, setOrdersLoading] = useState(false);
+	const queryClient = useQueryClient();
 	const [processingOrderIds, setProcessingOrderIds] = useState<string[]>([]);
 
-	const loadOrders = (restaurantId: string) => {
-		setOrdersLoading(true);
+	const { data: user, isLoading: userLoading } = useQuery({
+		queryKey: queryKeys.user.me,
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const auth = yield* AuthApi;
+					return yield* auth.me();
+				}),
+			),
+	});
 
-		void runtime
-			.runPromise(
+	const { data: restaurant, isLoading: restaurantLoading } = useQuery({
+		queryKey: queryKeys.restaurant.myRestaurant,
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const restaurantApi = yield* RestaurantApi;
+					return yield* restaurantApi.getMyRestaurant();
+				}),
+			).catch(() => null),
+	});
+
+	const restaurantId = restaurant?.id;
+
+	const { data: orders = [], isLoading: ordersLoading } = useQuery({
+		queryKey: queryKeys.orders.restaurantOrders(restaurantId ?? ""),
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* OrderApi;
-					return yield* api.listRestaurantOrders(restaurantId);
+					return yield* api.listRestaurantOrders(restaurantId!);
 				}),
-			)
-			.then((result) => setOrders(result))
-			.catch(() => setOrders([]))
-			.finally(() => setOrdersLoading(false));
-	};
+			),
+		enabled: !!restaurantId,
+	});
 
-	useEffect(() => {
-		const loadData = async () => {
-			setLoading(true);
-			try {
-				const [profile, restaurantData] = await Promise.all([
-					runtime.runPromise(
-						Effect.gen(function* () {
-							const auth = yield* AuthApi;
-							return yield* auth.me();
-						}),
-					),
-					runtime
-						.runPromise(
-							Effect.gen(function* () {
-								const restaurantApi = yield* RestaurantApi;
-								return yield* restaurantApi.getMyRestaurant();
-							}),
-						)
-						.catch(() => null),
-				]);
+	const loading = userLoading || restaurantLoading;
 
-				setUser(profile);
-				setRestaurant(restaurantData);
-			} finally {
-				setLoading(false);
-			}
-		};
-
-		loadData();
-	}, []);
-
-	useEffect(() => {
-		if (restaurant?.id) {
-			loadOrders(restaurant.id);
-		}
-	}, [restaurant?.id]);
-
-	const handleAcceptOrder = (orderId: string) => {
-		if (!restaurant?.id) return;
-
-		setProcessingOrderIds((prev) => [...prev, orderId]);
-
-		void runtime
-			.runPromise(
+	const acceptOrderMutation = useMutation({
+		mutationFn: (orderId: string) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* OrderApi;
-					return yield* api.acceptOrder(orderId, restaurant.id);
+					return yield* api.acceptOrder(orderId, restaurantId!);
 				}),
-			)
-			.then(() => {
-				toast.success("Order accepted");
-				loadOrders(restaurant.id);
-			})
-			.catch(() => {
-				toast.error("Unable to accept this order right now.");
-			})
-			.finally(() => {
-				setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+			),
+		onSuccess: () => {
+			toast.success("Order accepted");
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.orders.restaurantOrders(restaurantId!),
 			});
-	};
+		},
+		onError: () => {
+			toast.error("Unable to accept this order right now.");
+		},
+	});
 
-	const handleRejectOrder = (orderId: string) => {
-		if (!restaurant?.id) return;
-
-		setProcessingOrderIds((prev) => [...prev, orderId]);
-
-		void runtime
-			.runPromise(
+	const rejectOrderMutation = useMutation({
+		mutationFn: (orderId: string) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* OrderApi;
 					return yield* api.rejectOrder(
 						orderId,
-						restaurant.id,
+						restaurantId!,
 						"Vendor rejected the order",
 					);
 				}),
-			)
-			.then(() => {
-				toast.success("Order rejected");
-				loadOrders(restaurant.id);
-			})
-			.catch(() => {
-				toast.error("Unable to reject this order right now.");
-			})
-			.finally(() => {
-				setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+			),
+		onSuccess: () => {
+			toast.success("Order rejected");
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.orders.restaurantOrders(restaurantId!),
 			});
-	};
+		},
+		onError: () => {
+			toast.error("Unable to reject this order right now.");
+		},
+	});
 
-	const handleMarkPreparing = (orderId: string) => {
-		if (!restaurant?.id) return;
-
-		setProcessingOrderIds((prev) => [...prev, orderId]);
-
-		void runtime
-			.runPromise(
+	const markPreparingMutation = useMutation({
+		mutationFn: (orderId: string) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* OrderApi;
-					return yield* api.markPreparing(orderId, restaurant.id);
+					return yield* api.markPreparing(orderId, restaurantId!);
 				}),
-			)
-			.then(() => {
-				toast.success("Order marked as preparing");
-				loadOrders(restaurant.id);
-			})
-			.catch(() => {
-				toast.error("Unable to update the order status right now.");
-			})
-			.finally(() => {
-				setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+			),
+		onSuccess: () => {
+			toast.success("Order marked as preparing");
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.orders.restaurantOrders(restaurantId!),
 			});
-	};
+		},
+		onError: () => {
+			toast.error("Unable to update the order status right now.");
+		},
+	});
 
-	const handleMarkReadyForPickup = (orderId: string) => {
-		if (!restaurant?.id) return;
-
-		setProcessingOrderIds((prev) => [...prev, orderId]);
-
-		void runtime
-			.runPromise(
+	const markReadyForPickupMutation = useMutation({
+		mutationFn: (orderId: string) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* OrderApi;
-					return yield* api.markReadyForPickup(orderId, restaurant.id);
+					return yield* api.markReadyForPickup(orderId, restaurantId!);
 				}),
-			)
-			.then(() => {
-				toast.success("Order marked as ready for pickup");
-				loadOrders(restaurant.id);
-			})
-			.catch(() => {
-				toast.error("Unable to update the order status right now.");
-			})
-			.finally(() => {
-				setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+			),
+		onSuccess: () => {
+			toast.success("Order marked as ready for pickup");
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.orders.restaurantOrders(restaurantId!),
 			});
+		},
+		onError: () => {
+			toast.error("Unable to update the order status right now.");
+		},
+	});
+
+	const handleAcceptOrder = async (orderId: string) => {
+		if (!restaurantId) return;
+		setProcessingOrderIds((prev) => [...prev, orderId]);
+		try {
+			await acceptOrderMutation.mutateAsync(orderId);
+		} catch {
+		} finally {
+			setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+		}
+	};
+
+	const handleRejectOrder = async (orderId: string) => {
+		if (!restaurantId) return;
+		setProcessingOrderIds((prev) => [...prev, orderId]);
+		try {
+			await rejectOrderMutation.mutateAsync(orderId);
+		} catch {
+		} finally {
+			setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+		}
+	};
+
+	const handleMarkPreparing = async (orderId: string) => {
+		if (!restaurantId) return;
+		setProcessingOrderIds((prev) => [...prev, orderId]);
+		try {
+			await markPreparingMutation.mutateAsync(orderId);
+		} catch {
+		} finally {
+			setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+		}
+	};
+
+	const handleMarkReadyForPickup = async (orderId: string) => {
+		if (!restaurantId) return;
+		setProcessingOrderIds((prev) => [...prev, orderId]);
+		try {
+			await markReadyForPickupMutation.mutateAsync(orderId);
+		} catch {
+		} finally {
+			setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+		}
 	};
 
 	const quickActions = [

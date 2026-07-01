@@ -1,4 +1,5 @@
 import { Layer, ManagedRuntime } from "effect";
+import type * as Effect from "effect/Effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { AdminApi } from "./admin-api";
 import { AuthApi } from "./auth/auth-api";
@@ -20,3 +21,6 @@ const AppLayer = Layer.mergeAll(
 ).pipe(Layer.provide(BaseLayer));
 
 export const runtime = ManagedRuntime.make(AppLayer);
+
+export const runApi = <A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> =>
+	runtime.runPromise(effect);

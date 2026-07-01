@@ -1,8 +1,8 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import { Camera, Loader2 } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
@@ -16,13 +16,9 @@ import {
 	FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-	type FlatMenuCategoryResponseType,
-	type FlatMenuItemResponseType,
-	RestaurantApi,
-	type RestaurantResponseType,
-} from "@/lib/restaurant-api";
-import { runtime } from "@/lib/runtime";
+import { queryKeys } from "@/lib/queryKeys";
+import { RestaurantApi } from "@/lib/restaurant-api";
+import { runApi } from "@/lib/runtime";
 
 const defaultForm = {
 	name: "",
@@ -46,13 +42,7 @@ const defaultCategoryForm = {
 };
 
 export default function VendorRestaurantPage() {
-	const [restaurant, setRestaurant] = useState<RestaurantResponseType | null>(
-		null,
-	);
-	const [menuCategories, setMenuCategories] = useState<
-		FlatMenuCategoryResponseType[]
-	>([]);
-	const [menuItems, setMenuItems] = useState<FlatMenuItemResponseType[]>([]);
+	const queryClient = useQueryClient();
 	const [form, setForm] = useState(defaultForm);
 	const [categoryForm, setCategoryForm] = useState(defaultCategoryForm);
 	const [itemDrafts, setItemDrafts] = useState<
@@ -67,74 +57,68 @@ export default function VendorRestaurantPage() {
 			}
 		>
 	>({});
-	const [loading, setLoading] = useState(true);
-	const [saving, setSaving] = useState(false);
-	const [creatingCategory, setCreatingCategory] = useState(false);
-	const [uploadingLogo, setUploadingLogo] = useState(false);
-	const [uploadingBanner, setUploadingBanner] = useState(false);
+
 	const logoInputRef = useRef<HTMLInputElement | null>(null);
 	const bannerInputRef = useRef<HTMLInputElement | null>(null);
 
-	const loadMenuData = async (restaurantId: string) => {
-		const [categoriesResult, itemsResult] = await Promise.all([
-			runtime.runPromise(
+	const { data: restaurant, isLoading: restaurantLoading } = useQuery({
+		queryKey: queryKeys.restaurant.myRestaurant,
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					return yield* api.listCategories(restaurantId);
+					return yield* api.getMyRestaurant();
 				}),
 			),
-			runtime.runPromise(
-				Effect.gen(function* () {
-					const api = yield* RestaurantApi;
-					return yield* api.listMenuItems(restaurantId);
-				}),
-			),
-		]);
+	});
 
-		setMenuCategories([...categoriesResult.data]);
-		setMenuItems([...itemsResult.data]);
-	};
+	const restaurantId = restaurant?.id;
+
+	const { data: menuCategories = [], isLoading: categoriesLoading } = useQuery({
+		queryKey: queryKeys.restaurant.categories(restaurantId ?? ""),
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* RestaurantApi;
+					return yield* api.listCategories(restaurantId!);
+				}),
+			).then((res) => res.data),
+		enabled: !!restaurantId,
+	});
+
+	const { data: menuItems = [], isLoading: itemsLoading } = useQuery({
+		queryKey: queryKeys.restaurant.menuItems(restaurantId ?? ""),
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* RestaurantApi;
+					return yield* api.listMenuItems(restaurantId!);
+				}),
+			).then((res) => res.data),
+		enabled: !!restaurantId,
+	});
+
+	const loading = restaurantLoading || categoriesLoading || itemsLoading;
 
 	useEffect(() => {
-		const loadRestaurant = async () => {
-			setLoading(true);
-			try {
-				const result = await runtime.runPromise(
-					Effect.gen(function* () {
-						const api = yield* RestaurantApi;
-						return yield* api.getMyRestaurant();
-					}),
-				);
-				setRestaurant(result);
-				setForm({
-					name: result.name,
-					description: result.description ?? "",
-					phoneNumber: result.phoneNumber,
-					email: result.email,
-					addressLine: result.addressLine,
-					city: result.city,
-					state: result.state,
-					country: result.country ?? "Nigeria",
-					latitude: result.latitude,
-					longitude: result.longitude,
-					openingTime: result.openingTime,
-					closingTime: result.closingTime,
-					estimatedPrepTime: result.estimatedPrepTime,
-				});
-
-				await loadMenuData(result.id);
-			} catch {
-				setRestaurant(null);
-				setMenuCategories([]);
-				setMenuItems([]);
-				setForm(defaultForm);
-			} finally {
-				setLoading(false);
-			}
-		};
-
-		loadRestaurant();
-	}, []);
+		if (restaurant) {
+			setForm({
+				name: restaurant.name,
+				description: restaurant.description ?? "",
+				phoneNumber: restaurant.phoneNumber,
+				email: restaurant.email,
+				addressLine: restaurant.addressLine,
+				city: restaurant.city,
+				state: restaurant.state,
+				country: restaurant.country ?? "Nigeria",
+				latitude: restaurant.latitude,
+				longitude: restaurant.longitude,
+				openingTime: restaurant.openingTime,
+				closingTime: restaurant.closingTime,
+				estimatedPrepTime: restaurant.estimatedPrepTime,
+			});
+		}
+	}, [restaurant]);
 
 	const patch =
 		(key: keyof typeof form) =>
@@ -172,30 +156,57 @@ export default function VendorRestaurantPage() {
 			}));
 		};
 
+	const uploadLogoMutation = useMutation({
+		mutationFn: (file: File) =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* RestaurantApi;
+					return yield* api.uploadRestaurantLogo(restaurant!.id, file);
+				}),
+			),
+		onSuccess: (result) => {
+			queryClient.setQueryData(
+				queryKeys.restaurant.myRestaurant,
+				(prev: any) => (prev ? { ...prev, logoUrl: result.url } : prev),
+			);
+			toast.success("Restaurant logo uploaded");
+		},
+		onError: () => {
+			toast.error("Unable to upload restaurant logo");
+		},
+	});
+
 	const handleUploadLogo = async (
 		event: React.ChangeEvent<HTMLInputElement>,
 	) => {
 		const file = event.target.files?.[0];
 		if (!file || !restaurant) return;
 
-		setUploadingLogo(true);
-		try {
-			const result = await runtime.runPromise(
+		uploadLogoMutation.mutate(file);
+		event.target.value = "";
+	};
+
+	const uploadingLogo = uploadLogoMutation.isPending;
+
+	const uploadBannerMutation = useMutation({
+		mutationFn: (file: File) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					return yield* api.uploadRestaurantLogo(restaurant.id, file);
+					return yield* api.uploadRestaurantBanner(restaurant!.id, file);
 				}),
+			),
+		onSuccess: (result) => {
+			queryClient.setQueryData(
+				queryKeys.restaurant.myRestaurant,
+				(prev: any) => (prev ? { ...prev, bannerUrl: result.url } : prev),
 			);
-
-			setRestaurant((prev) => (prev ? { ...prev, logoUrl: result.url } : prev));
-			toast.success("Restaurant logo uploaded");
-		} catch {
-			toast.error("Unable to upload restaurant logo");
-		} finally {
-			setUploadingLogo(false);
-			event.target.value = "";
-		}
-	};
+			toast.success("Restaurant banner uploaded");
+		},
+		onError: () => {
+			toast.error("Unable to upload restaurant banner");
+		},
+	});
 
 	const handleUploadBanner = async (
 		event: React.ChangeEvent<HTMLInputElement>,
@@ -203,26 +214,31 @@ export default function VendorRestaurantPage() {
 		const file = event.target.files?.[0];
 		if (!file || !restaurant) return;
 
-		setUploadingBanner(true);
-		try {
-			const result = await runtime.runPromise(
+		uploadBannerMutation.mutate(file);
+		event.target.value = "";
+	};
+
+	const uploadingBanner = uploadBannerMutation.isPending;
+
+	const createCategoryMutation = useMutation({
+		mutationFn: (payload: { name: string; description?: string }) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					return yield* api.uploadRestaurantBanner(restaurant.id, file);
+					return yield* api.createCategory(restaurant!.id, payload);
 				}),
-			);
-
-			setRestaurant((prev) =>
-				prev ? { ...prev, bannerUrl: result.url } : prev,
-			);
-			toast.success("Restaurant banner uploaded");
-		} catch {
-			toast.error("Unable to upload restaurant banner");
-		} finally {
-			setUploadingBanner(false);
-			event.target.value = "";
-		}
-	};
+			),
+		onSuccess: () => {
+			setCategoryForm(defaultCategoryForm);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.categories(restaurant!.id),
+			});
+			toast.success("Menu category created");
+		},
+		onError: () => {
+			toast.error("Unable to create menu category");
+		},
+	});
 
 	const handleCreateCategory = async () => {
 		if (!restaurant) {
@@ -236,27 +252,42 @@ export default function VendorRestaurantPage() {
 			return;
 		}
 
-		setCreatingCategory(true);
-		try {
-			await runtime.runPromise(
+		createCategoryMutation.mutate({
+			name,
+			description: categoryForm.description.trim() || undefined,
+		});
+	};
+
+	const creatingCategory = createCategoryMutation.isPending;
+
+	const createMenuItemMutation = useMutation({
+		mutationFn: ({ categoryId, data }: { categoryId: string; data: any }) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					yield* api.createCategory(restaurant.id, {
-						name,
-						description: categoryForm.description.trim() || undefined,
-					});
+					return yield* api.createMenuItem(restaurant!.id, categoryId, data);
 				}),
-			);
-
-			setCategoryForm(defaultCategoryForm);
-			await loadMenuData(restaurant.id);
-			toast.success("Menu category created");
-		} catch {
-			toast.error("Unable to create menu category");
-		} finally {
-			setCreatingCategory(false);
-		}
-	};
+			),
+		onSuccess: (_, variables) => {
+			setItemDrafts((prev) => ({
+				...prev,
+				[variables.categoryId]: {
+					name: "",
+					description: "",
+					price: "",
+					isVegetarian: false,
+					calories: "",
+				},
+			}));
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.menuItems(restaurant!.id),
+			});
+			toast.success("Menu item added");
+		},
+		onError: () => {
+			toast.error("Unable to add menu item");
+		},
+	});
 
 	const handleCreateItem = async (categoryId: string) => {
 		if (!restaurant) {
@@ -280,78 +311,67 @@ export default function VendorRestaurantPage() {
 			return;
 		}
 
-		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const api = yield* RestaurantApi;
-					yield* api.createMenuItem(restaurant.id, categoryId, {
-						name,
-						description: draft.description.trim() || undefined,
-						price,
-						isVegetarian: draft.isVegetarian,
-						calories: draft.calories
-							? Number.parseFloat(draft.calories)
-							: undefined,
-					});
-				}),
-			);
-
-			setItemDrafts((prev) => ({
-				...prev,
-				[categoryId]: {
-					name: "",
-					description: "",
-					price: "",
-					isVegetarian: false,
-					calories: "",
-				},
-			}));
-
-			await loadMenuData(restaurant.id);
-			toast.success("Menu item added");
-		} catch {
-			toast.error("Unable to add menu item");
-		}
+		createMenuItemMutation.mutate({
+			categoryId,
+			data: {
+				name,
+				description: draft.description.trim() || undefined,
+				price,
+				isVegetarian: draft.isVegetarian,
+				calories: draft.calories
+					? Number.parseFloat(draft.calories)
+					: undefined,
+			},
+		});
 	};
 
-	const handleSubmit = async (e: React.FormEvent) => {
-		e.preventDefault();
-		setSaving(true);
-		try {
-			const payload = {
-				name: form.name.trim(),
-				description: form.description.trim() || undefined,
-				phoneNumber: form.phoneNumber.trim(),
-				email: form.email.trim(),
-				addressLine: form.addressLine.trim(),
-				city: form.city.trim(),
-				state: form.state.trim(),
-				country: form.country.trim() || undefined,
-				latitude: form.latitude.trim(),
-				longitude: form.longitude.trim(),
-				openingTime: form.openingTime,
-				closingTime: form.closingTime,
-				estimatedPrepTime: Number(form.estimatedPrepTime),
-			};
-
-			const result = await runtime.runPromise(
+	const saveRestaurantMutation = useMutation({
+		mutationFn: (payload: any) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
 					return restaurant
 						? yield* api.update(restaurant.id, payload)
 						: yield* api.create(payload);
 				}),
-			);
-
-			setRestaurant(result);
-			await loadMenuData(result.id);
+			),
+		onSuccess: (result) => {
+			queryClient.setQueryData(queryKeys.restaurant.myRestaurant, result);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.categories(result.id),
+			});
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.menuItems(result.id),
+			});
 			toast.success(restaurant ? "Restaurant updated" : "Restaurant created");
-		} catch {
+		},
+		onError: () => {
 			toast.error("Unable to save restaurant details");
-		} finally {
-			setSaving(false);
-		}
+		},
+	});
+
+	const handleSubmit = async (e: React.FormEvent) => {
+		e.preventDefault();
+		const payload = {
+			name: form.name.trim(),
+			description: form.description.trim() || undefined,
+			phoneNumber: form.phoneNumber.trim(),
+			email: form.email.trim(),
+			addressLine: form.addressLine.trim(),
+			city: form.city.trim(),
+			state: form.state.trim(),
+			country: form.country.trim() || undefined,
+			latitude: form.latitude.trim(),
+			longitude: form.longitude.trim(),
+			openingTime: form.openingTime,
+			closingTime: form.closingTime,
+			estimatedPrepTime: Number(form.estimatedPrepTime),
+		};
+
+		saveRestaurantMutation.mutate(payload);
 	};
+
+	const saving = saveRestaurantMutation.isPending;
 
 	return (
 		<div className="min-h-screen bg-gray-50">

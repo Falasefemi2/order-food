@@ -1,43 +1,59 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import { Camera, Loader2, ShieldCheck } from "lucide-react";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AuthApi } from "@/lib/auth/auth-api";
-import type { UserProfile } from "@/lib/auth/auth-schema";
-import { runtime } from "@/lib/runtime";
+import { queryKeys } from "@/lib/queryKeys";
+import { runApi } from "@/lib/runtime";
 
 export default function VendorProfilePage() {
-	const [profile, setProfile] = useState<UserProfile | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [uploading, setUploading] = useState(false);
+	const queryClient = useQueryClient();
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-	const loadProfile = async () => {
-		setLoading(true);
-		try {
-			const result = await runtime.runPromise(
+	const {
+		data: profile,
+		isLoading: loading,
+		isError,
+	} = useQuery({
+		queryKey: queryKeys.user.me,
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const auth = yield* AuthApi;
 					return yield* auth.me();
 				}),
-			);
-			setProfile(result);
-		} catch {
-			toast.error("Unable to load profile");
-		} finally {
-			setLoading(false);
-		}
-	};
+			),
+	});
 
 	useEffect(() => {
-		loadProfile();
-	}, []);
+		if (isError) {
+			toast.error("Unable to load profile");
+		}
+	}, [isError]);
+
+	const avatarMutation = useMutation({
+		mutationFn: (file: File) =>
+			runApi(
+				Effect.gen(function* () {
+					const auth = yield* AuthApi;
+					return yield* auth.uploadAvatar(file);
+				}),
+			),
+		onSuccess: (updated) => {
+			queryClient.setQueryData(queryKeys.user.me, updated);
+			toast.success("Avatar updated successfully");
+		},
+		onError: () => {
+			toast.error("Failed to upload avatar");
+		},
+	});
 
 	const handleAvatarChange = async (
 		event: React.ChangeEvent<HTMLInputElement>,
@@ -45,23 +61,11 @@ export default function VendorProfilePage() {
 		const file = event.target.files?.[0];
 		if (!file) return;
 
-		setUploading(true);
-		try {
-			const updated = await runtime.runPromise(
-				Effect.gen(function* () {
-					const auth = yield* AuthApi;
-					return yield* auth.uploadAvatar(file);
-				}),
-			);
-			setProfile(updated);
-			toast.success("Avatar updated successfully");
-		} catch {
-			toast.error("Failed to upload avatar");
-		} finally {
-			setUploading(false);
-			event.target.value = "";
-		}
+		avatarMutation.mutate(file);
+		event.target.value = "";
 	};
+
+	const uploading = avatarMutation.isPending;
 
 	return (
 		<div className="min-h-screen bg-gray-50">

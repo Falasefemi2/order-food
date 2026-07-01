@@ -1,5 +1,6 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import {
 	CheckCircle2,
@@ -31,7 +32,8 @@ import {
 	type CreateAddressPayloadType,
 	type UpdateAddressPayloadType,
 } from "@/lib/customer/address-api";
-import { runtime } from "@/lib/runtime";
+import { queryKeys } from "@/lib/queryKeys";
+import { runApi } from "@/lib/runtime";
 
 type Modal =
 	| { type: "add" }
@@ -66,47 +68,43 @@ const emptyForm: AddressForm = {
 };
 
 export default function AddressesPage() {
-	const [addresses, setAddresses] = useState<readonly AddressResponseType[]>(
-		[],
-	);
-	const [loading, setLoading] = useState(true);
+	const queryClient = useQueryClient();
 	const [modal, setModal] = useState<Modal>(null);
 
-	const load = () =>
-		runtime
-			.runPromise(
+	const { data: addresses = [], isLoading: loading } = useQuery({
+		queryKey: queryKeys.addresses.list,
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* AddressApi;
 					return yield* api.list();
 				}),
-			)
-			.then(setAddresses)
-			.catch(() => setAddresses([]))
-			.finally(() => setLoading(false));
+			),
+	});
 
-	useEffect(() => {
-		load();
-	}, []);
-
-	const handleSetDefault = (id: string) =>
-		runtime
-			.runPromise(
+	const setDefaultMutation = useMutation({
+		mutationFn: (id: string) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* AddressApi;
 					return yield* api.setDefault(id);
 				}),
-			)
-			.then(() => {
-				setAddresses((prev) =>
-					prev.map((a) => ({ ...a, isDefault: a.id === id })),
-				);
-				toast.success("Default address updated");
-			})
-			.catch(() => toast.error("Failed to update default address"));
+			),
+		onSuccess: () => {
+			toast.success("Default address updated");
+			queryClient.invalidateQueries({ queryKey: queryKeys.addresses.list });
+		},
+		onError: () => {
+			toast.error("Failed to update default address");
+		},
+	});
+
+	const handleSetDefault = (id: string) => {
+		setDefaultMutation.mutate(id);
+	};
 
 	const closeModal = () => setModal(null);
 	const refresh = () => {
-		load();
 		closeModal();
 	};
 
@@ -276,8 +274,8 @@ function AddressDialog({
 	onClose: () => void;
 	onRefresh: () => void;
 }) {
+	const queryClient = useQueryClient();
 	const [form, setForm] = useState<AddressForm>(emptyForm);
-	const [loading, setLoading] = useState(false);
 
 	useEffect(() => {
 		if (open) {
@@ -316,6 +314,36 @@ function AddressDialog({
 		return null;
 	};
 
+	const submitMutation = useMutation({
+		mutationFn: (payload: {
+			addressId?: string;
+			data: CreateAddressPayloadType | UpdateAddressPayloadType;
+		}) =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* AddressApi;
+					if (payload.addressId) {
+						yield* api.update(
+							payload.addressId,
+							payload.data as UpdateAddressPayloadType,
+						);
+					} else {
+						yield* api.create(payload.data as CreateAddressPayloadType);
+					}
+				}),
+			),
+		onSuccess: () => {
+			toast.success(address ? "Address updated" : "Address added");
+			queryClient.invalidateQueries({ queryKey: queryKeys.addresses.list });
+			onClose();
+		},
+		onError: () => {
+			toast.error("Failed to save address", {
+				description: "Please try again.",
+			});
+		},
+	});
+
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
 		const err = validate();
@@ -323,51 +351,36 @@ function AddressDialog({
 			toast.error("Check your inputs", { description: err });
 			return;
 		}
-		setLoading(true);
-		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const api = yield* AddressApi;
-					if (address) {
-						const payload: UpdateAddressPayloadType = {
-							label: form.label || undefined,
-							addressLine1: form.addressLine1,
-							addressLine2: form.addressLine2 || undefined,
-							city: form.city,
-							state: form.state,
-							postalCode: form.postalCode || undefined,
-							latitude: form.latitude || undefined,
-							longitude: form.longitude || undefined,
-							isDefault: form.isDefault,
-						};
-						yield* api.update(address.id, payload);
-					} else {
-						const payload: CreateAddressPayloadType = {
-							label: form.label || undefined,
-							addressLine1: form.addressLine1,
-							addressLine2: form.addressLine2 || undefined,
-							city: form.city,
-							state: form.state,
-							country: form.country || undefined,
-							postalCode: form.postalCode || undefined,
-							latitude: form.latitude,
-							longitude: form.longitude,
-							isDefault: form.isDefault,
-						};
-						yield* api.create(payload);
-					}
-				}),
-			);
-			toast.success(address ? "Address updated" : "Address added");
-			onRefresh();
-		} catch {
-			toast.error("Failed to save address", {
-				description: "Please try again.",
-			});
-		} finally {
-			setLoading(false);
-		}
+
+		const data = address
+			? {
+					label: form.label || undefined,
+					addressLine1: form.addressLine1,
+					addressLine2: form.addressLine2 || undefined,
+					city: form.city,
+					state: form.state,
+					postalCode: form.postalCode || undefined,
+					latitude: form.latitude || undefined,
+					longitude: form.longitude || undefined,
+					isDefault: form.isDefault,
+				}
+			: {
+					label: form.label || undefined,
+					addressLine1: form.addressLine1,
+					addressLine2: form.addressLine2 || undefined,
+					city: form.city,
+					state: form.state,
+					country: form.country || undefined,
+					postalCode: form.postalCode || undefined,
+					latitude: form.latitude,
+					longitude: form.longitude,
+					isDefault: form.isDefault,
+				};
+
+		submitMutation.mutate({ addressId: address?.id, data });
 	};
+
+	const loading = submitMutation.isPending;
 
 	return (
 		<Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -555,28 +568,35 @@ function DeleteDialog({
 	onClose: () => void;
 	onRefresh: () => void;
 }) {
-	const [loading, setLoading] = useState(false);
+	const queryClient = useQueryClient();
 
 	if (!address) return null;
 
-	const handleDelete = async () => {
-		setLoading(true);
-		try {
-			await runtime.runPromise(
+	const deleteMutation = useMutation({
+		mutationFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* AddressApi;
-					yield* api.remove(address.id);
+					return yield* api.remove(address.id);
 				}),
-			);
+			),
+		onSuccess: () => {
 			toast.success("Address deleted");
-			onRefresh();
-		} catch {
+			queryClient.invalidateQueries({ queryKey: queryKeys.addresses.list });
+			onClose();
+		},
+		onError: () => {
 			toast.error("Failed to delete", {
 				description: "This may be your default address.",
 			});
-			setLoading(false);
-		}
+		},
+	});
+
+	const handleDelete = () => {
+		deleteMutation.mutate();
 	};
+
+	const loading = deleteMutation.isPending;
 
 	return (
 		<Dialog open={open} onOpenChange={(o) => !o && onClose()}>
