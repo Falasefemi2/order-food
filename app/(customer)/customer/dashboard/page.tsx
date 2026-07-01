@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import {
 	Bell,
@@ -12,7 +13,6 @@ import {
 	UtensilsCrossed,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -21,19 +21,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { AuthApi } from "@/lib/auth/auth-api";
 import { AddressApi } from "@/lib/customer/address-api";
-import { OrderApi, type OrderSummaryResponseType } from "@/lib/order-api";
-import { runtime } from "@/lib/runtime";
-
-interface UserProfile {
-	id: string;
-	email: string;
-	firstName: string;
-	lastName: string;
-	role: string;
-	walletBalance: string;
-	avatarUrl: string | null;
-	createdAt: string;
-}
+import { OrderApi } from "@/lib/order-api";
+import { queryKeys } from "@/lib/queryKeys";
+import { runApi } from "@/lib/runtime";
 
 const quickActions = [
 	{
@@ -67,39 +57,28 @@ const quickActions = [
 ];
 
 export default function CustomerDashboard() {
-	const [user, setUser] = useState<UserProfile | null>(null);
-	const [recentOrders, setRecentOrders] = useState<
-		readonly OrderSummaryResponseType[]
-	>([]);
-	const [loading, setLoading] = useState(true);
-	const [ordersLoading, setOrdersLoading] = useState(true);
-
-	useEffect(() => {
-		runtime
-			.runPromise(
+	const { data: user, isLoading: loading } = useQuery({
+		queryKey: queryKeys.user.me,
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const auth = yield* AuthApi;
 					return yield* auth.me();
 				}),
-			)
-			.then(setUser)
-			.catch(console.error)
-			.finally(() => setLoading(false));
-	}, []);
+			),
+	});
 
-	useEffect(() => {
-		setOrdersLoading(true);
-		runtime
-			.runPromise(
+	const { data: recentOrders = [], isLoading: ordersLoading } = useQuery({
+		queryKey: queryKeys.orders.myOrders,
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* OrderApi;
-					return yield* api.listMyOrders();
+					const result = yield* api.listMyOrders();
+					return result.orders.slice(0, 3);
 				}),
-			)
-			.then((response) => setRecentOrders(response.orders.slice(0, 3)))
-			.catch(() => setRecentOrders([]))
-			.finally(() => setOrdersLoading(false));
-	}, []);
+			),
+	});
 
 	const initials = user
 		? `${user.firstName[0]}${user.lastName[0]}`.toUpperCase()
@@ -324,23 +303,17 @@ export default function CustomerDashboard() {
 }
 
 function AddressPreview() {
-	const [addresses, setAddresses] = useState<
-		{ id: string; label: string; addressLine1: string; isDefault: boolean }[]
-	>([]);
-	const [loading, setLoading] = useState(true);
-
-	useEffect(() => {
-		runtime
-			.runPromise(
+	const { data: addresses = [], isLoading: loading } = useQuery({
+		queryKey: queryKeys.addresses.list,
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* AddressApi;
-					return yield* api.list();
+					const list = yield* api.list();
+					return list.slice(0, 2);
 				}),
-			)
-			.then((list) => setAddresses(list.slice(0, 2)))
-			.catch(() => setAddresses([]))
-			.finally(() => setLoading(false));
-	}, []);
+			),
+	});
 
 	if (loading) {
 		return (

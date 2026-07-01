@@ -1,9 +1,10 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import { Camera, Loader2, Pencil, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
 import { Button } from "@/components/ui/button";
@@ -18,13 +19,13 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { queryKeys } from "@/lib/queryKeys";
 import {
 	type FlatMenuCategoryResponseType,
 	type FlatMenuItemResponseType,
 	RestaurantApi,
-	type RestaurantResponseType,
 } from "@/lib/restaurant-api";
-import { runtime } from "@/lib/runtime";
+import { runApi } from "@/lib/runtime";
 
 const defaultCategoryForm = {
 	name: "",
@@ -41,18 +42,9 @@ const defaultItemForm = {
 };
 
 export default function VendorRestaurantMenuPage() {
-	const [restaurant, setRestaurant] = useState<RestaurantResponseType | null>(
-		null,
-	);
-	const [categories, setCategories] = useState<
-		Array<FlatMenuCategoryResponseType>
-	>([]);
-	const [items, setItems] = useState<Array<FlatMenuItemResponseType>>([]);
+	const queryClient = useQueryClient();
 	const [categoryForm, setCategoryForm] = useState(defaultCategoryForm);
 	const [itemForm, setItemForm] = useState(defaultItemForm);
-	const [loading, setLoading] = useState(true);
-	const [creatingCategory, setCreatingCategory] = useState(false);
-	const [creatingItem, setCreatingItem] = useState(false);
 	const [editingCategoryId, setEditingCategoryId] = useState<string | null>(
 		null,
 	);
@@ -70,9 +62,6 @@ export default function VendorRestaurantMenuPage() {
 			}
 		>
 	>({});
-	const [uploadingItemImageFor, setUploadingItemImageFor] = useState<
-		string | null
-	>(null);
 	const [deleteDialogState, setDeleteDialogState] = useState<{
 		type: "category" | "item";
 		id: string;
@@ -80,52 +69,44 @@ export default function VendorRestaurantMenuPage() {
 	} | null>(null);
 	const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-	const loadMenuData = async (restaurantId: string) => {
-		const [categoriesResult, itemsResult] = await Promise.all([
-			runtime.runPromise(
+	const { data: restaurant, isLoading: restaurantLoading } = useQuery({
+		queryKey: queryKeys.restaurant.myRestaurant,
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					return yield* api.listCategories(restaurantId);
+					return yield* api.getMyRestaurant();
 				}),
 			),
-			runtime.runPromise(
+	});
+
+	const restaurantId = restaurant?.id;
+
+	const { data: categories = [], isLoading: categoriesLoading } = useQuery({
+		queryKey: queryKeys.restaurant.categories(restaurantId ?? ""),
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					return yield* api.listMenuItems(restaurantId);
+					return yield* api.listCategories(restaurantId!);
 				}),
-			),
-		]);
+			).then((res) => res.data.filter((c) => c.isActive)),
+		enabled: !!restaurantId,
+	});
 
-		setCategories(
-			categoriesResult.data.filter((category) => category.isActive),
-		);
-		setItems(itemsResult.data.filter((item) => item.isAvailable));
-	};
+	const { data: items = [], isLoading: itemsLoading } = useQuery({
+		queryKey: queryKeys.restaurant.menuItems(restaurantId ?? ""),
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* RestaurantApi;
+					return yield* api.listMenuItems(restaurantId!);
+				}),
+			).then((res) => res.data.filter((i) => i.isAvailable)),
+		enabled: !!restaurantId,
+	});
 
-	useEffect(() => {
-		const loadRestaurant = async () => {
-			setLoading(true);
-			try {
-				const result = await runtime.runPromise(
-					Effect.gen(function* () {
-						const api = yield* RestaurantApi;
-						return yield* api.getMyRestaurant();
-					}),
-				);
-
-				setRestaurant(result);
-				await loadMenuData(result.id);
-			} catch {
-				setRestaurant(null);
-				setCategories([]);
-				setItems([]);
-			} finally {
-				setLoading(false);
-			}
-		};
-
-		loadRestaurant();
-	}, []);
+	const loading = restaurantLoading || categoriesLoading || itemsLoading;
 
 	const handleStartCategoryEdit = (category: FlatMenuCategoryResponseType) => {
 		setEditingCategoryId(category.id);
@@ -134,6 +115,33 @@ export default function VendorRestaurantMenuPage() {
 			description: category.description ?? "",
 		});
 	};
+
+	const updateCategoryMutation = useMutation({
+		mutationFn: ({
+			categoryId,
+			payload,
+		}: {
+			categoryId: string;
+			payload: any;
+		}) =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* RestaurantApi;
+					return yield* api.updateCategory(restaurant!.id, categoryId, payload);
+				}),
+			),
+		onSuccess: () => {
+			setEditingCategoryId(null);
+			setCategoryEditForm(defaultCategoryForm);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.categories(restaurant!.id),
+			});
+			toast.success("Category updated");
+		},
+		onError: () => {
+			toast.error("Unable to update category");
+		},
+	});
 
 	const handleSaveCategory = async () => {
 		if (!restaurant || !editingCategoryId) return;
@@ -144,29 +152,38 @@ export default function VendorRestaurantMenuPage() {
 			return;
 		}
 
-		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const api = yield* RestaurantApi;
-					yield* api.updateCategory(restaurant.id, editingCategoryId, {
-						name,
-						description: categoryEditForm.description.trim() || undefined,
-					});
-				}),
-			);
-
-			setEditingCategoryId(null);
-			setCategoryEditForm(defaultCategoryForm);
-			await loadMenuData(restaurant.id);
-			toast.success("Category updated");
-		} catch {
-			toast.error("Unable to update category");
-		}
+		updateCategoryMutation.mutate({
+			categoryId: editingCategoryId,
+			payload: {
+				name,
+				description: categoryEditForm.description.trim() || undefined,
+			},
+		});
 	};
 
 	const handleDeleteCategory = (categoryId: string, name: string) => {
 		setDeleteDialogState({ type: "category", id: categoryId, name });
 	};
+
+	const deleteCategoryMutation = useMutation({
+		mutationFn: (categoryId: string) =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* RestaurantApi;
+					return yield* api.deleteCategory(restaurant!.id, categoryId);
+				}),
+			),
+		onSuccess: () => {
+			setDeleteDialogState(null);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.categories(restaurant!.id),
+			});
+			toast.success("Category deleted");
+		},
+		onError: () => {
+			toast.error("Unable to delete category");
+		},
+	});
 
 	const handleDeleteCategoryConfirmed = async () => {
 		if (
@@ -176,21 +193,28 @@ export default function VendorRestaurantMenuPage() {
 		)
 			return;
 
-		try {
-			await runtime.runPromise(
+		deleteCategoryMutation.mutate(deleteDialogState.id);
+	};
+
+	const createCategoryMutation = useMutation({
+		mutationFn: (payload: { name: string; description?: string }) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					yield* api.deleteCategory(restaurant.id, deleteDialogState.id);
+					return yield* api.createCategory(restaurant!.id, payload);
 				}),
-			);
-
-			setDeleteDialogState(null);
-			await loadMenuData(restaurant.id);
-			toast.success("Category deleted");
-		} catch {
-			toast.error("Unable to delete category");
-		}
-	};
+			),
+		onSuccess: () => {
+			setCategoryForm(defaultCategoryForm);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.categories(restaurant!.id),
+			});
+			toast.success("Category created");
+		},
+		onError: () => {
+			toast.error("Unable to create category");
+		},
+	});
 
 	const handleCreateCategory = async () => {
 		if (!restaurant) {
@@ -204,27 +228,32 @@ export default function VendorRestaurantMenuPage() {
 			return;
 		}
 
-		setCreatingCategory(true);
-		try {
-			await runtime.runPromise(
+		createCategoryMutation.mutate({
+			name,
+			description: categoryForm.description.trim() || undefined,
+		});
+	};
+
+	const creatingCategory = createCategoryMutation.isPending;
+
+	const uploadMenuItemImageMutation = useMutation({
+		mutationFn: ({ itemId, file }: { itemId: string; file: File }) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					yield* api.createCategory(restaurant.id, {
-						name,
-						description: categoryForm.description.trim() || undefined,
-					});
+					return yield* api.uploadMenuItemImage(restaurant!.id, itemId, file);
 				}),
-			);
-
-			setCategoryForm(defaultCategoryForm);
-			await loadMenuData(restaurant.id);
-			toast.success("Category created");
-		} catch {
-			toast.error("Unable to create category");
-		} finally {
-			setCreatingCategory(false);
-		}
-	};
+			),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.menuItems(restaurant!.id),
+			});
+			toast.success("Item image uploaded");
+		},
+		onError: () => {
+			toast.error("Unable to upload item image");
+		},
+	});
 
 	const handleUploadItemImage = async (
 		itemId: string,
@@ -232,23 +261,12 @@ export default function VendorRestaurantMenuPage() {
 	) => {
 		if (!file || !restaurant) return;
 
-		setUploadingItemImageFor(itemId);
-		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const api = yield* RestaurantApi;
-					yield* api.uploadMenuItemImage(restaurant.id, itemId, file);
-				}),
-			);
-
-			await loadMenuData(restaurant.id);
-			toast.success("Item image uploaded");
-		} catch {
-			toast.error("Unable to upload item image");
-		} finally {
-			setUploadingItemImageFor(null);
-		}
+		uploadMenuItemImageMutation.mutate({ itemId, file });
 	};
+
+	const uploadingItemImageFor = uploadMenuItemImageMutation.isPending
+		? (uploadMenuItemImageMutation.variables?.itemId ?? null)
+		: null;
 
 	const handleStartItemEdit = (item: FlatMenuItemResponseType) => {
 		setEditingItemId(item.id);
@@ -264,6 +282,26 @@ export default function VendorRestaurantMenuPage() {
 		}));
 	};
 
+	const updateMenuItemMutation = useMutation({
+		mutationFn: ({ itemId, payload }: { itemId: string; payload: any }) =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* RestaurantApi;
+					return yield* api.updateMenuItem(restaurant!.id, itemId, payload);
+				}),
+			),
+		onSuccess: () => {
+			setEditingItemId(null);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.menuItems(restaurant!.id),
+			});
+			toast.success("Item updated");
+		},
+		onError: () => {
+			toast.error("Unable to update item");
+		},
+	});
+
 	const handleSaveItem = async (itemId: string) => {
 		if (!restaurant) return;
 
@@ -278,52 +316,75 @@ export default function VendorRestaurantMenuPage() {
 			return;
 		}
 
-		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const api = yield* RestaurantApi;
-					yield* api.updateMenuItem(restaurant.id, itemId, {
-						name,
-						description: draft.description.trim() || undefined,
-						price,
-						isAvailable: true,
-						isVegetarian: draft.isVegetarian,
-						calories: draft.calories ? Number(draft.calories) : undefined,
-					});
-				}),
-			);
-
-			setEditingItemId(null);
-			await loadMenuData(restaurant.id);
-			toast.success("Item updated");
-		} catch {
-			toast.error("Unable to update item");
-		}
+		updateMenuItemMutation.mutate({
+			itemId,
+			payload: {
+				name,
+				description: draft.description.trim() || undefined,
+				price,
+				isAvailable: true,
+				isVegetarian: draft.isVegetarian,
+				calories: draft.calories ? Number(draft.calories) : undefined,
+			},
+		});
 	};
 
 	const handleDeleteItem = (itemId: string, name: string) => {
 		setDeleteDialogState({ type: "item", id: itemId, name });
 	};
 
+	const deleteMenuItemMutation = useMutation({
+		mutationFn: (itemId: string) =>
+			runApi(
+				Effect.gen(function* () {
+					const api = yield* RestaurantApi;
+					return yield* api.deleteMenuItem(restaurant!.id, itemId);
+				}),
+			),
+		onSuccess: () => {
+			setDeleteDialogState(null);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.menuItems(restaurant!.id),
+			});
+			toast.success("Item deleted");
+		},
+		onError: () => {
+			toast.error("Unable to delete item");
+		},
+	});
+
 	const handleDeleteItemConfirmed = async () => {
 		if (!restaurant || !deleteDialogState || deleteDialogState.type !== "item")
 			return;
 
-		try {
-			await runtime.runPromise(
+		deleteMenuItemMutation.mutate(deleteDialogState.id);
+	};
+
+	const createMenuItemMutation = useMutation({
+		mutationFn: ({
+			categoryId,
+			payload,
+		}: {
+			categoryId: string;
+			payload: any;
+		}) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* RestaurantApi;
-					yield* api.deleteMenuItem(restaurant.id, deleteDialogState.id);
+					return yield* api.createMenuItem(restaurant!.id, categoryId, payload);
 				}),
-			);
-
-			setDeleteDialogState(null);
-			await loadMenuData(restaurant.id);
-			toast.success("Item deleted");
-		} catch {
-			toast.error("Unable to delete item");
-		}
-	};
+			),
+		onSuccess: () => {
+			setItemForm(defaultItemForm);
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.restaurant.menuItems(restaurant!.id),
+			});
+			toast.success("Item created");
+		},
+		onError: () => {
+			toast.error("Unable to create item");
+		},
+	});
 
 	const handleCreateItem = async () => {
 		if (!restaurant) {
@@ -345,30 +406,19 @@ export default function VendorRestaurantMenuPage() {
 			return;
 		}
 
-		setCreatingItem(true);
-		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const api = yield* RestaurantApi;
-					yield* api.createMenuItem(restaurant.id, categoryId, {
-						name,
-						description: itemForm.description.trim() || undefined,
-						price,
-						isVegetarian: itemForm.isVegetarian,
-						calories: itemForm.calories ? Number(itemForm.calories) : undefined,
-					});
-				}),
-			);
-
-			setItemForm(defaultItemForm);
-			await loadMenuData(restaurant.id);
-			toast.success("Menu item created");
-		} catch {
-			toast.error("Unable to create menu item");
-		} finally {
-			setCreatingItem(false);
-		}
+		createMenuItemMutation.mutate({
+			categoryId,
+			payload: {
+				name,
+				description: itemForm.description.trim() || undefined,
+				price,
+				isVegetarian: itemForm.isVegetarian,
+				calories: itemForm.calories ? Number(itemForm.calories) : undefined,
+			},
+		});
 	};
+
+	const creatingItem = createMenuItemMutation.isPending;
 
 	return (
 		<div className="min-h-screen bg-gray-50">

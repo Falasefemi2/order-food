@@ -1,5 +1,6 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import {
 	Bike,
@@ -11,7 +12,7 @@ import {
 	ShieldCheck,
 	UserRound,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import { toast } from "sonner";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -20,13 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { AuthApi } from "@/lib/auth/auth-api";
-import type { UserProfile } from "@/lib/auth/auth-schema";
-import {
-	type DeliveryRequestResponseType,
-	DriverApi,
-	type DriverProfileResponseType,
-} from "@/lib/driver-api";
-import { runtime } from "@/lib/runtime";
+import { DriverApi } from "@/lib/driver-api";
+import { queryKeys } from "@/lib/queryKeys";
+import { runApi } from "@/lib/runtime";
 
 const quickActions = [
 	{
@@ -53,69 +50,67 @@ const quickActions = [
 ];
 
 export default function DriverDashboard() {
-	const [user, setUser] = useState<UserProfile | null>(null);
-	const [driverProfile, setDriverProfile] =
-		useState<DriverProfileResponseType | null>(null);
-	const [pendingRequest, setPendingRequest] =
-		useState<DeliveryRequestResponseType | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [statusUpdating, setStatusUpdating] = useState(false);
-	const [requestUpdating, setRequestUpdating] = useState(false);
-	const [uploadingAvatar, setUploadingAvatar] = useState(false);
-	const [uploadingDocument, setUploadingDocument] = useState<
-		"license" | "vehicle" | "nationalId" | null
-	>(null);
+	const queryClient = useQueryClient();
 	const avatarInputRef = useRef<HTMLInputElement | null>(null);
 	const licenseInputRef = useRef<HTMLInputElement | null>(null);
 	const vehicleInputRef = useRef<HTMLInputElement | null>(null);
 	const nationalIdInputRef = useRef<HTMLInputElement | null>(null);
 
-	const refreshDriverProfile = () => {
-		return runtime.runPromise(
-			Effect.gen(function* () {
-				const driver = yield* DriverApi;
-				return yield* driver.getMyProfile();
-			}),
-		);
-	};
+	const { data: user, isLoading: userLoading } = useQuery({
+		queryKey: queryKeys.user.me,
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const auth = yield* AuthApi;
+					return yield* auth.me();
+				}),
+			),
+	});
 
-	const refreshPendingRequest = () => {
-		return runtime.runPromise(
-			Effect.gen(function* () {
-				const driver = yield* DriverApi;
-				return yield* driver.getMyPendingRequest();
-			}),
-		);
-	};
+	const { data: driverProfile, isLoading: driverProfileLoading } = useQuery({
+		queryKey: queryKeys.driver.profile,
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const driver = yield* DriverApi;
+					return yield* driver.getMyProfile();
+				}),
+			),
+	});
 
-	useEffect(() => {
-		const loadData = async () => {
-			setLoading(true);
+	const { data: pendingRequest, isLoading: pendingRequestLoading } = useQuery({
+		queryKey: queryKeys.driver.pendingRequest,
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const driver = yield* DriverApi;
+					return yield* driver.getMyPendingRequest();
+				}),
+			),
+	});
 
-			try {
-				const [profile, driverData, requestData] = await Promise.all([
-					runtime.runPromise(
-						Effect.gen(function* () {
-							const auth = yield* AuthApi;
-							return yield* auth.me();
-						}),
-					),
-					refreshDriverProfile(),
-					refreshPendingRequest(),
-				]);
+	const loading = userLoading || driverProfileLoading || pendingRequestLoading;
 
-				setUser(profile);
-				setDriverProfile(driverData);
-				setPendingRequest(requestData);
-			} catch (error) {
-				console.error(error);
-			} finally {
-				setLoading(false);
-			}
-		};
-
-		void loadData();
-	}, []);
+	const updateStatusMutation = useMutation({
+		mutationFn: (nextStatus: "online_idle" | "offline") =>
+			runApi(
+				Effect.gen(function* () {
+					const driver = yield* DriverApi;
+					return yield* driver.updateStatus(nextStatus);
+				}),
+			),
+		onSuccess: (_, nextStatus) => {
+			toast.success(
+				nextStatus === "online_idle"
+					? "You are now online for deliveries"
+					: "You are now offline",
+			);
+			queryClient.invalidateQueries({ queryKey: queryKeys.driver.profile });
+		},
+		onError: () => {
+			toast.error("Unable to update delivery status right now.");
+		},
+	});
 
 	const handleToggleAvailability = async () => {
 		if (!driverProfile) {
@@ -125,28 +120,27 @@ export default function DriverDashboard() {
 		const nextStatus =
 			driverProfile.status === "online_idle" ? "offline" : "online_idle";
 
-		setStatusUpdating(true);
-
-		try {
-			const updatedProfile = await runtime.runPromise(
-				Effect.gen(function* () {
-					const driver = yield* DriverApi;
-					return yield* driver.updateStatus(nextStatus);
-				}),
-			);
-
-			setDriverProfile(updatedProfile);
-			toast.success(
-				nextStatus === "online_idle"
-					? "You are now online for deliveries"
-					: "You are now offline",
-			);
-		} catch {
-			toast.error("Unable to update delivery status right now.");
-		} finally {
-			setStatusUpdating(false);
-		}
+		updateStatusMutation.mutate(nextStatus);
 	};
+
+	const statusUpdating = updateStatusMutation.isPending;
+
+	const avatarMutation = useMutation({
+		mutationFn: (file: File) =>
+			runApi(
+				Effect.gen(function* () {
+					const auth = yield* AuthApi;
+					return yield* auth.uploadAvatar(file);
+				}),
+			),
+		onSuccess: () => {
+			toast.success("Avatar updated successfully");
+			queryClient.invalidateQueries({ queryKey: queryKeys.user.me });
+		},
+		onError: () => {
+			toast.error("Failed to upload avatar");
+		},
+	});
 
 	const handleAvatarChange = async (
 		event: React.ChangeEvent<HTMLInputElement>,
@@ -156,34 +150,21 @@ export default function DriverDashboard() {
 			return;
 		}
 
-		setUploadingAvatar(true);
-
-		try {
-			const updatedProfile = await runtime.runPromise(
-				Effect.gen(function* () {
-					const auth = yield* AuthApi;
-					return yield* auth.uploadAvatar(file);
-				}),
-			);
-
-			setUser(updatedProfile);
-			toast.success("Avatar updated successfully");
-		} catch {
-			toast.error("Failed to upload avatar");
-		} finally {
-			setUploadingAvatar(false);
-			event.target.value = "";
-		}
+		avatarMutation.mutate(file);
+		event.target.value = "";
 	};
 
-	const handleUploadDocument = async (
-		kind: "license" | "vehicle" | "nationalId",
-		file: File,
-	) => {
-		setUploadingDocument(kind);
+	const uploadingAvatar = avatarMutation.isPending;
 
-		try {
-			const updatedProfile = await runtime.runPromise(
+	const uploadDocumentMutation = useMutation({
+		mutationFn: ({
+			kind,
+			file,
+		}: {
+			kind: "license" | "vehicle" | "nationalId";
+			file: File;
+		}) =>
+			runApi(
 				Effect.gen(function* () {
 					const driver = yield* DriverApi;
 
@@ -197,15 +178,21 @@ export default function DriverDashboard() {
 
 					return yield* driver.uploadNationalIdImage(file);
 				}),
-			);
-
-			setDriverProfile(updatedProfile);
+			),
+		onSuccess: () => {
 			toast.success("Document uploaded successfully");
-		} catch {
+			queryClient.invalidateQueries({ queryKey: queryKeys.driver.profile });
+		},
+		onError: () => {
 			toast.error("Unable to upload this document right now.");
-		} finally {
-			setUploadingDocument(null);
-		}
+		},
+	});
+
+	const handleUploadDocument = async (
+		kind: "license" | "vehicle" | "nationalId",
+		file: File,
+	) => {
+		uploadDocumentMutation.mutate({ kind, file });
 	};
 
 	const handleDocumentInputChange = (
@@ -222,59 +209,67 @@ export default function DriverDashboard() {
 		};
 	};
 
+	const uploadingDocument = uploadDocumentMutation.isPending
+		? (uploadDocumentMutation.variables?.kind ?? null)
+		: null;
+
+	const acceptRequestMutation = useMutation({
+		mutationFn: (requestId: string) =>
+			runApi(
+				Effect.gen(function* () {
+					const driver = yield* DriverApi;
+					return yield* driver.acceptDeliveryRequest(requestId);
+				}),
+			),
+		onSuccess: () => {
+			toast.success("Delivery request accepted");
+			queryClient.invalidateQueries({ queryKey: queryKeys.driver.profile });
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.driver.pendingRequest,
+			});
+		},
+		onError: () => {
+			toast.error("Unable to accept this delivery request right now.");
+		},
+	});
+
 	const handleAcceptRequest = async () => {
 		if (!pendingRequest) {
 			return;
 		}
 
-		setRequestUpdating(true);
+		acceptRequestMutation.mutate(pendingRequest.id);
+	};
 
-		try {
-			await runtime.runPromise(
+	const declineRequestMutation = useMutation({
+		mutationFn: (requestId: string) =>
+			runApi(
 				Effect.gen(function* () {
 					const driver = yield* DriverApi;
-					return yield* driver.acceptDeliveryRequest(pendingRequest.id);
+					return yield* driver.declineDeliveryRequest(requestId);
 				}),
-			);
-
-			toast.success("Delivery request accepted");
-			const [driverData, requestData] = await Promise.all([
-				refreshDriverProfile(),
-				refreshPendingRequest(),
-			]);
-
-			setDriverProfile(driverData);
-			setPendingRequest(requestData);
-		} catch {
-			toast.error("Unable to accept this delivery request right now.");
-		} finally {
-			setRequestUpdating(false);
-		}
-	};
+			),
+		onSuccess: () => {
+			toast.success("Delivery request declined");
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.driver.pendingRequest,
+			});
+		},
+		onError: () => {
+			toast.error("Unable to decline this delivery request right now.");
+		},
+	});
 
 	const handleDeclineRequest = async () => {
 		if (!pendingRequest) {
 			return;
 		}
 
-		setRequestUpdating(true);
-
-		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const driver = yield* DriverApi;
-					return yield* driver.declineDeliveryRequest(pendingRequest.id);
-				}),
-			);
-
-			toast.success("Delivery request declined");
-			setPendingRequest(await refreshPendingRequest());
-		} catch {
-			toast.error("Unable to decline this delivery request right now.");
-		} finally {
-			setRequestUpdating(false);
-		}
+		declineRequestMutation.mutate(pendingRequest.id);
 	};
+
+	const requestUpdating =
+		acceptRequestMutation.isPending || declineRequestMutation.isPending;
 
 	const initials = user
 		? `${user.firstName[0]}${user.lastName[0]}`.toUpperCase()

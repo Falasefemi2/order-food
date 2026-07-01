@@ -1,45 +1,34 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import { Package2, ReceiptText } from "lucide-react";
-import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { OrderApi, type OrderSummaryResponseType } from "@/lib/order-api";
-import { runtime } from "@/lib/runtime";
+import { OrderApi } from "@/lib/order-api";
+import { queryKeys } from "@/lib/queryKeys";
+import { runApi } from "@/lib/runtime";
 
 export default function CustomerOrdersPage() {
-	const [orders, setOrders] = useState<readonly OrderSummaryResponseType[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [cancellingOrderIds, setCancellingOrderIds] = useState<string[]>([]);
+	const queryClient = useQueryClient();
 
-	const loadOrders = () => {
-		setLoading(true);
-
-		void runtime
-			.runPromise(
+	const { data: orders = [], isLoading: loading } = useQuery({
+		queryKey: queryKeys.orders.myOrders,
+		queryFn: () =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* OrderApi;
 					return yield* api.listMyOrders();
 				}),
-			)
-			.then((result) => setOrders(result.orders))
-			.catch(() => setOrders([]))
-			.finally(() => setLoading(false));
-	};
+			).then((result) => result.orders),
+	});
 
-	useEffect(() => {
-		loadOrders();
-	}, []);
-
-	const handleCancelOrder = (orderId: string) => {
-		setCancellingOrderIds((prev) => [...prev, orderId]);
-
-		void runtime
-			.runPromise(
+	const cancelOrderMutation = useMutation({
+		mutationFn: (orderId: string) =>
+			runApi(
 				Effect.gen(function* () {
 					const api = yield* OrderApi;
 					return yield* api.cancelOrder(
@@ -47,17 +36,18 @@ export default function CustomerOrdersPage() {
 						"Customer requested cancellation",
 					);
 				}),
-			)
-			.then(() => {
-				toast.success("Order cancelled successfully");
-				loadOrders();
-			})
-			.catch(() => {
-				toast.error("Unable to cancel your order right now.");
-			})
-			.finally(() => {
-				setCancellingOrderIds((prev) => prev.filter((id) => id !== orderId));
-			});
+			),
+		onSuccess: () => {
+			toast.success("Order cancelled successfully");
+			queryClient.invalidateQueries({ queryKey: queryKeys.orders.myOrders });
+		},
+		onError: () => {
+			toast.error("Unable to cancel your order right now.");
+		},
+	});
+
+	const handleCancelOrder = (orderId: string) => {
+		cancelOrderMutation.mutate(orderId);
 	};
 
 	return (
@@ -127,10 +117,14 @@ export default function CustomerOrdersPage() {
 													variant="outline"
 													size="sm"
 													className="h-8 px-3 text-xs"
-													disabled={cancellingOrderIds.includes(order.id)}
+													disabled={
+														cancelOrderMutation.isPending &&
+														cancelOrderMutation.variables === order.id
+													}
 													onClick={() => handleCancelOrder(order.id)}
 												>
-													{cancellingOrderIds.includes(order.id)
+													{cancelOrderMutation.isPending &&
+													cancelOrderMutation.variables === order.id
 														? "Cancelling..."
 														: "Cancel"}
 												</Button>

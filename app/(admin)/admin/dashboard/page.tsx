@@ -1,102 +1,199 @@
 "use client";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Effect from "effect/Effect";
 import { Building2, Check, CircleDollarSign, Store, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import {
-	AdminApi,
-	type AdminRestaurantResponseType,
-	type AdminUserResponseType,
-	type PendingDriverResponseType,
-} from "@/lib/admin-api";
-import { runtime } from "@/lib/runtime";
+import { AdminApi } from "@/lib/admin-api";
+import { queryKeys } from "@/lib/queryKeys";
+import { runApi } from "@/lib/runtime";
 
 export default function AdminDashboardPage() {
-	const [pendingRestaurants, setPendingRestaurants] = useState<
-		readonly AdminRestaurantResponseType[]
-	>([]);
-	const [pendingDrivers, setPendingDrivers] = useState<
-		readonly PendingDriverResponseType[]
-	>([]);
-	const [restaurants, setRestaurants] = useState<
-		readonly AdminRestaurantResponseType[]
-	>([]);
-	const [users, setUsers] = useState<readonly AdminUserResponseType[]>([]);
-	const [loading, setLoading] = useState(true);
+	const queryClient = useQueryClient();
 	const [busyIds, setBusyIds] = useState<string[]>([]);
 
-	const loadData = async () => {
-		setLoading(true);
+	const {
+		data: pendingRestaurants = [],
+		isLoading: pendingRestaurantsLoading,
+	} = useQuery({
+		queryKey: queryKeys.admin.pendingRestaurants,
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const admin = yield* AdminApi;
+					return yield* admin.listPendingRestaurants();
+				}),
+			),
+	});
 
-		try {
-			const [
-				restaurantsPending,
-				allRestaurants,
-				pendingDriversList,
-				usersList,
-			] = await Promise.all([
-				runtime.runPromise(
-					Effect.gen(function* () {
-						const admin = yield* AdminApi;
-						return yield* admin.listPendingRestaurants();
-					}),
-				),
-				runtime.runPromise(
-					Effect.gen(function* () {
-						const admin = yield* AdminApi;
-						return yield* admin.listAllRestaurants();
-					}),
-				),
-				runtime.runPromise(
+	const { data: restaurants = [], isLoading: restaurantsLoading } = useQuery({
+		queryKey: queryKeys.admin.allRestaurants,
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const admin = yield* AdminApi;
+					return yield* admin.listAllRestaurants();
+				}),
+			),
+	});
+
+	const { data: pendingDrivers = [], isLoading: pendingDriversLoading } =
+		useQuery({
+			queryKey: queryKeys.admin.pendingDrivers,
+			queryFn: () =>
+				runApi(
 					Effect.gen(function* () {
 						const admin = yield* AdminApi;
 						return yield* admin.listPendingDrivers();
 					}),
 				),
-				runtime.runPromise(
-					Effect.gen(function* () {
-						const admin = yield* AdminApi;
-						return yield* admin.listUsers();
-					}),
-				),
-			]);
+		});
 
-			setPendingRestaurants(restaurantsPending);
-			setRestaurants(allRestaurants);
-			setPendingDrivers(pendingDriversList);
-			setUsers(usersList);
-		} catch {
-			toast.error("Unable to load admin dashboard data");
-		} finally {
-			setLoading(false);
-		}
-	};
+	const { data: users = [], isLoading: usersLoading } = useQuery({
+		queryKey: queryKeys.admin.users,
+		queryFn: () =>
+			runApi(
+				Effect.gen(function* () {
+					const admin = yield* AdminApi;
+					return yield* admin.listUsers();
+				}),
+			),
+	});
 
-	useEffect(() => {
-		void loadData();
-	}, []);
+	const loading =
+		pendingRestaurantsLoading ||
+		restaurantsLoading ||
+		pendingDriversLoading ||
+		usersLoading;
 
-	const handleApproveRestaurant = async (id: string) => {
-		setBusyIds((prev) => [...prev, `restaurant-${id}`]);
-
-		try {
-			await runtime.runPromise(
+	const approveRestaurantMutation = useMutation({
+		mutationFn: (id: string) =>
+			runApi(
 				Effect.gen(function* () {
 					const admin = yield* AdminApi;
 					return yield* admin.approveRestaurant(id);
 				}),
-			);
-
+			),
+		onSuccess: () => {
 			toast.success("Restaurant approved");
-			await loadData();
-		} catch {
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.admin.pendingRestaurants,
+			});
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.admin.allRestaurants,
+			});
+		},
+		onError: () => {
 			toast.error("Unable to approve restaurant");
+		},
+	});
+
+	const rejectRestaurantMutation = useMutation({
+		mutationFn: (id: string) =>
+			runApi(
+				Effect.gen(function* () {
+					const admin = yield* AdminApi;
+					return yield* admin.rejectRestaurant(id, "Rejected by admin");
+				}),
+			),
+		onSuccess: () => {
+			toast.success("Restaurant rejected");
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.admin.pendingRestaurants,
+			});
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.admin.allRestaurants,
+			});
+		},
+		onError: () => {
+			toast.error("Unable to reject restaurant");
+		},
+	});
+
+	const approveDriverMutation = useMutation({
+		mutationFn: (id: string) =>
+			runApi(
+				Effect.gen(function* () {
+					const admin = yield* AdminApi;
+					return yield* admin.approveDriver(id);
+				}),
+			),
+		onSuccess: () => {
+			toast.success("Driver approved");
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.admin.pendingDrivers,
+			});
+			queryClient.invalidateQueries({ queryKey: queryKeys.admin.users });
+		},
+		onError: () => {
+			toast.error("Unable to approve driver");
+		},
+	});
+
+	const rejectDriverMutation = useMutation({
+		mutationFn: (id: string) =>
+			runApi(
+				Effect.gen(function* () {
+					const admin = yield* AdminApi;
+					return yield* admin.rejectDriver(id, "Rejected by admin");
+				}),
+			),
+		onSuccess: () => {
+			toast.success("Driver rejected");
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.admin.pendingDrivers,
+			});
+		},
+		onError: () => {
+			toast.error("Unable to reject driver");
+		},
+	});
+
+	const deactivateUserMutation = useMutation({
+		mutationFn: (id: string) =>
+			runApi(
+				Effect.gen(function* () {
+					const admin = yield* AdminApi;
+					return yield* admin.deactivateUser(id);
+				}),
+			),
+		onSuccess: () => {
+			toast.success("User deactivated");
+			queryClient.invalidateQueries({ queryKey: queryKeys.admin.users });
+		},
+		onError: () => {
+			toast.error("Unable to deactivate user");
+		},
+	});
+
+	const reactivateUserMutation = useMutation({
+		mutationFn: (id: string) =>
+			runApi(
+				Effect.gen(function* () {
+					const admin = yield* AdminApi;
+					return yield* admin.reactivateUser(id);
+				}),
+			),
+		onSuccess: () => {
+			toast.success("User reactivated");
+			queryClient.invalidateQueries({ queryKey: queryKeys.admin.users });
+		},
+		onError: () => {
+			toast.error("Unable to reactivate user");
+		},
+	});
+
+	const handleApproveRestaurant = async (id: string) => {
+		setBusyIds((prev) => [...prev, `restaurant-${id}`]);
+		try {
+			await approveRestaurantMutation.mutateAsync(id);
+		} catch {
 		} finally {
 			setBusyIds((prev) => prev.filter((item) => item !== `restaurant-${id}`));
 		}
@@ -104,19 +201,9 @@ export default function AdminDashboardPage() {
 
 	const handleRejectRestaurant = async (id: string) => {
 		setBusyIds((prev) => [...prev, `restaurant-reject-${id}`]);
-
 		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const admin = yield* AdminApi;
-					return yield* admin.rejectRestaurant(id, "Rejected by admin");
-				}),
-			);
-
-			toast.success("Restaurant rejected");
-			await loadData();
+			await rejectRestaurantMutation.mutateAsync(id);
 		} catch {
-			toast.error("Unable to reject restaurant");
 		} finally {
 			setBusyIds((prev) =>
 				prev.filter((item) => item !== `restaurant-reject-${id}`),
@@ -126,19 +213,9 @@ export default function AdminDashboardPage() {
 
 	const handleApproveDriver = async (id: string) => {
 		setBusyIds((prev) => [...prev, `driver-${id}`]);
-
 		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const admin = yield* AdminApi;
-					return yield* admin.approveDriver(id);
-				}),
-			);
-
-			toast.success("Driver approved");
-			await loadData();
+			await approveDriverMutation.mutateAsync(id);
 		} catch {
-			toast.error("Unable to approve driver");
 		} finally {
 			setBusyIds((prev) => prev.filter((item) => item !== `driver-${id}`));
 		}
@@ -146,19 +223,9 @@ export default function AdminDashboardPage() {
 
 	const handleRejectDriver = async (id: string) => {
 		setBusyIds((prev) => [...prev, `driver-reject-${id}`]);
-
 		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const admin = yield* AdminApi;
-					return yield* admin.rejectDriver(id, "Rejected by admin");
-				}),
-			);
-
-			toast.success("Driver rejected");
-			await loadData();
+			await rejectDriverMutation.mutateAsync(id);
 		} catch {
-			toast.error("Unable to reject driver");
 		} finally {
 			setBusyIds((prev) =>
 				prev.filter((item) => item !== `driver-reject-${id}`),
@@ -168,19 +235,9 @@ export default function AdminDashboardPage() {
 
 	const handleDeactivateUser = async (id: string) => {
 		setBusyIds((prev) => [...prev, `user-${id}`]);
-
 		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const admin = yield* AdminApi;
-					return yield* admin.deactivateUser(id);
-				}),
-			);
-
-			toast.success("User deactivated");
-			await loadData();
+			await deactivateUserMutation.mutateAsync(id);
 		} catch {
-			toast.error("Unable to deactivate user");
 		} finally {
 			setBusyIds((prev) => prev.filter((item) => item !== `user-${id}`));
 		}
@@ -188,19 +245,9 @@ export default function AdminDashboardPage() {
 
 	const handleReactivateUser = async (id: string) => {
 		setBusyIds((prev) => [...prev, `user-reactivate-${id}`]);
-
 		try {
-			await runtime.runPromise(
-				Effect.gen(function* () {
-					const admin = yield* AdminApi;
-					return yield* admin.reactivateUser(id);
-				}),
-			);
-
-			toast.success("User reactivated");
-			await loadData();
+			await reactivateUserMutation.mutateAsync(id);
 		} catch {
-			toast.error("Unable to reactivate user");
 		} finally {
 			setBusyIds((prev) =>
 				prev.filter((item) => item !== `user-reactivate-${id}`),
