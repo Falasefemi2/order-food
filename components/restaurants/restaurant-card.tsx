@@ -35,7 +35,6 @@ export function RestaurantCard({
 	return (
 		<Link href={`${basePath}/${id}`} className="block group">
 			<Card className="overflow-hidden border-border/60 transition-shadow duration-200 hover:shadow-md rounded-2xl py-0">
-				{/* Banner */}
 				<div className="relative h-44 bg-muted overflow-hidden">
 					{bannerUrl ? (
 						<img

@@ -1,9 +1,19 @@
 "use client";
 
-import { ChevronLeft, Clock, Info, Leaf, MapPin, Star } from "lucide-react";
+import * as Effect from "effect/Effect";
+import {
+	ChevronLeft,
+	Clock,
+	Info,
+	Leaf,
+	MapPin,
+	ShoppingBag,
+	Star,
+} from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,6 +31,12 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
+import {
+	AddressApi,
+	type AddressResponseType,
+} from "@/lib/customer/address-api";
+import { OrderApi, type PlaceOrderPayload } from "@/lib/order-api";
+import { runtime } from "@/lib/runtime";
 import type { PublicRestaurantDetail } from "@/lib/types";
 
 interface RestaurantDetailClientProps {
@@ -29,6 +45,15 @@ interface RestaurantDetailClientProps {
 }
 
 type MenuItem = PublicRestaurantDetail["categories"][0]["items"][0];
+
+type CartItem = {
+	menuItemId: string;
+	name: string;
+	quantity: number;
+	unitPrice: number;
+	selectedOptionIds: string[];
+	imageUrl?: string | null;
+};
 
 export function RestaurantDetailClient({
 	restaurant,
@@ -39,6 +64,16 @@ export function RestaurantDetailClient({
 		restaurant.categories[0]?.id ?? "",
 	);
 	const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
+	const [cartItems, setCartItems] = useState<CartItem[]>([]);
+	const [checkoutOpen, setCheckoutOpen] = useState(false);
+	const [addresses, setAddresses] = useState<readonly AddressResponseType[]>(
+		[],
+	);
+	const [selectedAddressId, setSelectedAddressId] = useState("");
+	const [paymentMethod, setPaymentMethod] =
+		useState<PlaceOrderPayload["paymentMethod"]>("cash_on_delivery");
+	const [deliveryNotes, setDeliveryNotes] = useState("");
+	const [isPlacingOrder, setIsPlacingOrder] = useState(false);
 	const [isScrolled, setIsScrolled] = useState(false);
 	const categoryRefs = useRef<Record<string, HTMLElement | null>>({});
 	const observerRef = useRef<IntersectionObserver | null>(null);
@@ -76,8 +111,115 @@ export function RestaurantDetailClient({
 		(c) => c.items.length > 0,
 	);
 
+	const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+	const cartSubtotal = cartItems.reduce(
+		(sum, item) => sum + item.unitPrice * item.quantity,
+		0,
+	);
+
 	const rating = parseFloat(restaurant.ratingAvg);
 	const hasRating = restaurant.ratingCount > 0;
+
+	const handleAddToCart = (
+		item: MenuItem,
+		quantity: number,
+		selectedOptionIds: string[],
+	) => {
+		const unitPrice = parseFloat(item.price);
+		setCartItems((prev) => {
+			const existingIndex = prev.findIndex(
+				(cartItem) =>
+					cartItem.menuItemId === item.id &&
+					JSON.stringify(cartItem.selectedOptionIds) ===
+						JSON.stringify(selectedOptionIds),
+			);
+
+			if (existingIndex >= 0) {
+				const nextItems = [...prev];
+				nextItems[existingIndex] = {
+					...nextItems[existingIndex],
+					quantity: nextItems[existingIndex].quantity + quantity,
+				};
+				return nextItems;
+			}
+
+			return [
+				...prev,
+				{
+					menuItemId: item.id,
+					name: item.name,
+					quantity,
+					unitPrice,
+					selectedOptionIds,
+					imageUrl: item.imageUrl,
+				},
+			];
+		});
+		toast.success(`${quantity} × ${item.name} added to cart`);
+	};
+
+	const openCheckout = () => {
+		runtime
+			.runPromise(
+				Effect.gen(function* () {
+					const api = yield* AddressApi;
+					return yield* api.list();
+				}),
+			)
+			.then((result) => {
+				setAddresses(result);
+				const defaultAddress = result.find((address) => address.isDefault);
+				setSelectedAddressId(defaultAddress?.id ?? result[0]?.id ?? "");
+				setCheckoutOpen(true);
+			})
+			.catch(() => {
+				setAddresses([]);
+				setSelectedAddressId("");
+				setCheckoutOpen(true);
+			});
+	};
+
+	const handlePlaceOrder = async () => {
+		if (cartItems.length === 0) {
+			toast.error("Your cart is empty");
+			return;
+		}
+
+		if (!selectedAddressId) {
+			toast.error("Choose a delivery address first");
+			return;
+		}
+
+		setIsPlacingOrder(true);
+
+		try {
+			await runtime.runPromise(
+				Effect.gen(function* () {
+					const api = yield* OrderApi;
+					return yield* api.placeOrder({
+						restaurantId: restaurant.id,
+						addressId: selectedAddressId,
+						items: cartItems.map((item) => ({
+							menuItemId: item.menuItemId,
+							quantity: item.quantity,
+							selectedOptionIds: item.selectedOptionIds,
+						})),
+						paymentMethod,
+						deliveryNotes: deliveryNotes || undefined,
+					});
+				}),
+			);
+
+			toast.success("Order placed successfully");
+			setCartItems([]);
+			setCheckoutOpen(false);
+			router.push("/customer/orders");
+		} catch {
+			toast.error("Unable to place your order right now");
+		} finally {
+			setIsPlacingOrder(false);
+		}
+	};
 
 	return (
 		<div className="min-h-screen bg-gray-50">
@@ -257,9 +399,160 @@ export function RestaurantDetailClient({
 				</div>
 			</div>
 
+			{cartCount > 0 && (
+				<div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md px-4">
+					<Button
+						onClick={openCheckout}
+						className="w-full h-14 rounded-2xl shadow-lg bg-primary text-primary-foreground hover:bg-primary/90"
+					>
+						<div className="flex items-center justify-between w-full px-1">
+							<div className="flex items-center gap-2">
+								<ShoppingBag size={16} />
+								<span>Cart ({cartCount})</span>
+							</div>
+							<span>₦{cartSubtotal.toLocaleString()}</span>
+						</div>
+					</Button>
+				</div>
+			)}
+
+			<Sheet open={checkoutOpen} onOpenChange={setCheckoutOpen}>
+				<SheetContent side="bottom" className="rounded-t-3xl max-h-[92vh] p-0">
+					<div className="flex flex-col max-h-[92vh]">
+						<div className="px-4 pt-4 pb-3 border-b">
+							<SheetHeader>
+								<SheetTitle>Checkout</SheetTitle>
+							</SheetHeader>
+						</div>
+						<div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+							<div className="space-y-3">
+								{cartItems.map((item) => (
+									<div
+										key={`${item.menuItemId}-${item.selectedOptionIds.join("")}`}
+										className="flex items-center gap-3 rounded-2xl bg-muted/50 p-3"
+									>
+										<div className="h-14 w-14 rounded-xl overflow-hidden bg-background shrink-0">
+											{item.imageUrl ? (
+												<img
+													src={item.imageUrl}
+													alt={item.name}
+													className="h-full w-full object-cover"
+												/>
+											) : (
+												<div className="flex h-full w-full items-center justify-center text-2xl">
+													🍽
+												</div>
+											)}
+										</div>
+										<div className="min-w-0 flex-1">
+											<p className="font-semibold text-sm truncate">
+												{item.name}
+											</p>
+											<p className="text-xs text-muted-foreground">
+												{item.quantity} × ₦{item.unitPrice.toLocaleString()}
+											</p>
+										</div>
+										<span className="font-semibold text-sm">
+											₦{(item.unitPrice * item.quantity).toLocaleString()}
+										</span>
+									</div>
+								))}
+							</div>
+
+							<div className="space-y-2">
+								<label className="text-sm font-medium">Delivery address</label>
+								<select
+									value={selectedAddressId}
+									onChange={(e) => setSelectedAddressId(e.target.value)}
+									className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
+								>
+									<option value="">Select address</option>
+									{addresses.map((address) => (
+										<option key={address.id} value={address.id}>
+											{address.label} — {address.addressLine1}, {address.city}
+										</option>
+									))}
+								</select>
+								{addresses.length === 0 && (
+									<div className="flex items-center justify-between rounded-xl border border-dashed border-border px-3 py-2">
+										<span className="text-xs text-muted-foreground">
+											Add an address first
+										</span>
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={() => router.push("/customer/addresses")}
+										>
+											Add address
+										</Button>
+									</div>
+								)}
+							</div>
+
+							<div className="space-y-2">
+								<label className="text-sm font-medium">Payment method</label>
+								<div className="grid grid-cols-2 gap-2">
+									{(
+										[
+											"cash_on_delivery",
+											"card",
+											"bank_transfer",
+											"wallet",
+										] as const
+									).map((method) => (
+										<button
+											key={method}
+											type="button"
+											onClick={() => setPaymentMethod(method)}
+											className={`rounded-xl border px-3 py-2 text-sm ${paymentMethod === method ? "border-primary bg-primary/5 text-primary" : "border-border bg-background"}`}
+										>
+											{method === "cash_on_delivery"
+												? "Cash on delivery"
+												: method === "card"
+													? "Card"
+													: method === "bank_transfer"
+														? "Bank transfer"
+														: "Wallet"}
+										</button>
+									))}
+								</div>
+							</div>
+
+							<div className="space-y-2">
+								<label className="text-sm font-medium">Delivery notes</label>
+								<textarea
+									value={deliveryNotes}
+									onChange={(e) => setDeliveryNotes(e.target.value)}
+									rows={3}
+									placeholder="Door code, leave at gate, etc."
+									className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
+								/>
+							</div>
+						</div>
+
+						<div className="border-t px-4 py-3">
+							<div className="flex items-center justify-between text-sm mb-3">
+								<span>Subtotal</span>
+								<span>₦{cartSubtotal.toLocaleString()}</span>
+							</div>
+							<Button
+								onClick={handlePlaceOrder}
+								disabled={isPlacingOrder}
+								className="w-full h-12 rounded-2xl"
+							>
+								{isPlacingOrder
+									? "Placing order..."
+									: `Place order • ₦${cartSubtotal.toLocaleString()}`}
+							</Button>
+						</div>
+					</div>
+				</SheetContent>
+			</Sheet>
+
 			<MenuItemSheet
 				item={selectedItem}
 				onClose={() => setSelectedItem(null)}
+				onAddToCart={handleAddToCart}
 			/>
 		</div>
 	);
@@ -349,13 +642,52 @@ function MenuItemCard({ item, onSelect }: MenuItemCardProps) {
 function MenuItemSheet({
 	item,
 	onClose,
+	onAddToCart,
 }: {
 	item: MenuItem | null;
 	onClose: () => void;
+	onAddToCart?: (
+		item: MenuItem,
+		quantity: number,
+		selectedOptionIds: string[],
+	) => void;
 }) {
 	if (!item) return null;
 
 	const price = parseFloat(item.price);
+	const [quantity, setQuantity] = useState(1);
+	const [selectedOptionIds, setSelectedOptionIds] = useState<string[]>([]);
+	const [isMobile, setIsMobile] = useState(false);
+
+	useEffect(() => {
+		setQuantity(1);
+		setSelectedOptionIds([]);
+	}, [item]);
+
+	const toggleOption = (optionId: string) => {
+		setSelectedOptionIds((prev) => {
+			if (prev.includes(optionId)) {
+				return prev.filter((id) => id !== optionId);
+			}
+			return [...prev, optionId];
+		});
+	};
+
+	const handleAdd = () => {
+		const requiredGroups = item.customizationGroups.filter((g) => g.isRequired);
+		for (const group of requiredGroups) {
+			const hasSelection = group.options.some((option) =>
+				selectedOptionIds.includes(option.id),
+			);
+			if (!hasSelection) {
+				toast.error(`Please select an option for ${group.name}`);
+				return;
+			}
+		}
+
+		onAddToCart?.(item, quantity, selectedOptionIds);
+		onClose();
+	};
 
 	const content = (
 		<div className="space-y-5">
@@ -398,6 +730,31 @@ function MenuItemSheet({
 				</div>
 			</div>
 
+			<div className="rounded-2xl bg-muted/40 p-3">
+				<div className="flex items-center justify-between">
+					<span className="text-sm font-medium">Quantity</span>
+					<div className="flex items-center gap-2 rounded-xl border border-border bg-background px-1">
+						<button
+							type="button"
+							onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
+							className="h-8 w-8 rounded-lg text-lg"
+						>
+							−
+						</button>
+						<span className="min-w-6 text-center text-sm font-semibold">
+							{quantity}
+						</span>
+						<button
+							type="button"
+							onClick={() => setQuantity((prev) => prev + 1)}
+							className="h-8 w-8 rounded-lg text-lg"
+						>
+							+
+						</button>
+					</div>
+				</div>
+			</div>
+
 			{item.customizationGroups
 				.filter((g) => g.options.length > 0)
 				.map((group) => (
@@ -427,26 +784,34 @@ function MenuItemSheet({
 						<div className="space-y-2">
 							{group.options
 								.filter((o) => o.isAvailable)
-								.map((opt) => (
-									<div
-										key={opt.id}
-										className="flex items-center justify-between px-3.5 py-3 rounded-xl border border-border bg-white text-sm"
-									>
-										<span className="text-foreground">{opt.name}</span>
-										{parseFloat(opt.price) > 0 && (
-											<span className="text-muted-foreground font-medium">
-												+₦{parseFloat(opt.price).toLocaleString()}
-											</span>
-										)}
-									</div>
-								))}
+								.map((opt) => {
+									const selected = selectedOptionIds.includes(opt.id);
+									return (
+										<button
+											type="button"
+											onClick={() => toggleOption(opt.id)}
+											className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-3 text-sm ${selected ? "border-primary bg-primary/5" : "border-border bg-white"}`}
+										>
+											<span className="text-foreground">{opt.name}</span>
+											{parseFloat(opt.price) > 0 && (
+												<span className="text-muted-foreground font-medium">
+													+₦{parseFloat(opt.price).toLocaleString()}
+												</span>
+											)}
+										</button>
+									);
+								})}
 						</div>
 					</div>
 				))}
+
+			<div className="pt-2">
+				<Button onClick={handleAdd} className="w-full h-12 rounded-2xl">
+					Add to cart • ₦{(price * quantity).toLocaleString()}
+				</Button>
+			</div>
 		</div>
 	);
-
-	const [isMobile, setIsMobile] = useState(false);
 
 	useEffect(() => {
 		const mq = window.matchMedia("(max-width: 767px)");
