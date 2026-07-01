@@ -114,7 +114,6 @@ export default function AddressesPage() {
 		<div className="min-h-screen bg-gray-50">
 			<CustomerPageHeader title="Addresses" />
 			<div className="max-w-xl mx-auto space-y-6 py-6 px-4">
-				{/* Header */}
 				<div className="flex items-center justify-between">
 					<div>
 						<h1 className="text-2xl font-bold text-foreground">Addresses</h1>

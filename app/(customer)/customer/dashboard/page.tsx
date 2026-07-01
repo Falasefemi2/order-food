@@ -21,6 +21,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { AuthApi } from "@/lib/auth/auth-api";
 import { AddressApi } from "@/lib/customer/address-api";
+import { OrderApi, type OrderSummaryResponseType } from "@/lib/order-api";
 import { runtime } from "@/lib/runtime";
 
 interface UserProfile {
@@ -67,7 +68,11 @@ const quickActions = [
 
 export default function CustomerDashboard() {
 	const [user, setUser] = useState<UserProfile | null>(null);
+	const [recentOrders, setRecentOrders] = useState<
+		readonly OrderSummaryResponseType[]
+	>([]);
 	const [loading, setLoading] = useState(true);
+	const [ordersLoading, setOrdersLoading] = useState(true);
 
 	useEffect(() => {
 		runtime
@@ -80,6 +85,20 @@ export default function CustomerDashboard() {
 			.then(setUser)
 			.catch(console.error)
 			.finally(() => setLoading(false));
+	}, []);
+
+	useEffect(() => {
+		setOrdersLoading(true);
+		runtime
+			.runPromise(
+				Effect.gen(function* () {
+					const api = yield* OrderApi;
+					return yield* api.listMyOrders();
+				}),
+			)
+			.then((response) => setRecentOrders(response.orders.slice(0, 3)))
+			.catch(() => setRecentOrders([]))
+			.finally(() => setOrdersLoading(false));
 	}, []);
 
 	const initials = user
@@ -192,26 +211,67 @@ export default function CustomerDashboard() {
 						</Link>
 					</div>
 
-					<Card className="border-border/60">
-						<CardContent className="py-12 flex flex-col items-center text-center">
-							<div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-3">
-								<ShoppingBag size={24} className="text-muted-foreground/50" />
-							</div>
-							<p className="font-semibold text-foreground text-sm mb-1">
-								No orders yet
-							</p>
-							<p className="text-xs text-muted-foreground mb-5 max-w-xs">
-								Your order history will show up here once you place your first
-								order.
-							</p>
-							<Button asChild size="sm" className="gap-1.5">
-								<Link href="/customer/restaurants">
-									<UtensilsCrossed size={14} />
-									Browse restaurants
-								</Link>
-							</Button>
-						</CardContent>
-					</Card>
+					{ordersLoading ? (
+						<div className="space-y-3">
+							{[1, 2, 3].map((i) => (
+								<div
+									key={i}
+									className="h-16 bg-muted rounded-xl animate-pulse"
+								/>
+							))}
+						</div>
+					) : recentOrders.length === 0 ? (
+						<Card className="border-border/60">
+							<CardContent className="py-12 flex flex-col items-center text-center">
+								<div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-3">
+									<ShoppingBag size={24} className="text-muted-foreground/50" />
+								</div>
+								<p className="font-semibold text-foreground text-sm mb-1">
+									No orders yet
+								</p>
+								<p className="text-xs text-muted-foreground mb-5 max-w-xs">
+									Your order history will show up here once you place your first
+									order.
+								</p>
+								<Button asChild size="sm" className="gap-1.5">
+									<Link href="/customer/restaurants">
+										<UtensilsCrossed size={14} />
+										Browse restaurants
+									</Link>
+								</Button>
+							</CardContent>
+						</Card>
+					) : (
+						<div className="space-y-2">
+							{recentOrders.map((order) => (
+								<Card key={order.id} className="border-border/60">
+									<CardContent className="p-3.5">
+										<div className="flex items-center justify-between gap-3">
+											<div className="min-w-0">
+												<p className="text-sm font-semibold text-foreground truncate">
+													{order.restaurantName}
+												</p>
+												<p className="text-xs text-muted-foreground">
+													{order.itemCount} items • {order.paymentMethod}
+												</p>
+											</div>
+											<Badge variant="outline" className="shrink-0">
+												{order.status}
+											</Badge>
+										</div>
+										<div className="mt-2 flex items-center justify-between">
+											<span className="text-xs text-muted-foreground">
+												Total
+											</span>
+											<span className="text-sm font-semibold text-foreground">
+												₦{Number(order.totalPrice).toLocaleString()}
+											</span>
+										</div>
+									</CardContent>
+								</Card>
+							))}
+						</div>
+					)}
 				</div>
 
 				<Separator />

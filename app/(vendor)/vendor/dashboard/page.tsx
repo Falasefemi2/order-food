@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { CustomerPageHeader } from "@/components/customer/customer-page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { AuthApi } from "@/lib/auth/auth-api";
 import type { UserProfile } from "@/lib/auth/auth-schema";
+import { OrderApi, type OrderSummaryResponseType } from "@/lib/order-api";
 import {
 	RestaurantApi,
 	type RestaurantResponseType,
@@ -29,7 +31,25 @@ export default function VendorDashboardPage() {
 	const [restaurant, setRestaurant] = useState<RestaurantResponseType | null>(
 		null,
 	);
+	const [orders, setOrders] = useState<readonly OrderSummaryResponseType[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [ordersLoading, setOrdersLoading] = useState(false);
+	const [processingOrderIds, setProcessingOrderIds] = useState<string[]>([]);
+
+	const loadOrders = (restaurantId: string) => {
+		setOrdersLoading(true);
+
+		void runtime
+			.runPromise(
+				Effect.gen(function* () {
+					const api = yield* OrderApi;
+					return yield* api.listRestaurantOrders(restaurantId);
+				}),
+			)
+			.then((result) => setOrders(result))
+			.catch(() => setOrders([]))
+			.finally(() => setOrdersLoading(false));
+	};
 
 	useEffect(() => {
 		const loadData = async () => {
@@ -61,6 +81,112 @@ export default function VendorDashboardPage() {
 
 		loadData();
 	}, []);
+
+	useEffect(() => {
+		if (restaurant?.id) {
+			loadOrders(restaurant.id);
+		}
+	}, [restaurant?.id]);
+
+	const handleAcceptOrder = (orderId: string) => {
+		if (!restaurant?.id) return;
+
+		setProcessingOrderIds((prev) => [...prev, orderId]);
+
+		void runtime
+			.runPromise(
+				Effect.gen(function* () {
+					const api = yield* OrderApi;
+					return yield* api.acceptOrder(orderId, restaurant.id);
+				}),
+			)
+			.then(() => {
+				toast.success("Order accepted");
+				loadOrders(restaurant.id);
+			})
+			.catch(() => {
+				toast.error("Unable to accept this order right now.");
+			})
+			.finally(() => {
+				setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+			});
+	};
+
+	const handleRejectOrder = (orderId: string) => {
+		if (!restaurant?.id) return;
+
+		setProcessingOrderIds((prev) => [...prev, orderId]);
+
+		void runtime
+			.runPromise(
+				Effect.gen(function* () {
+					const api = yield* OrderApi;
+					return yield* api.rejectOrder(
+						orderId,
+						restaurant.id,
+						"Vendor rejected the order",
+					);
+				}),
+			)
+			.then(() => {
+				toast.success("Order rejected");
+				loadOrders(restaurant.id);
+			})
+			.catch(() => {
+				toast.error("Unable to reject this order right now.");
+			})
+			.finally(() => {
+				setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+			});
+	};
+
+	const handleMarkPreparing = (orderId: string) => {
+		if (!restaurant?.id) return;
+
+		setProcessingOrderIds((prev) => [...prev, orderId]);
+
+		void runtime
+			.runPromise(
+				Effect.gen(function* () {
+					const api = yield* OrderApi;
+					return yield* api.markPreparing(orderId, restaurant.id);
+				}),
+			)
+			.then(() => {
+				toast.success("Order marked as preparing");
+				loadOrders(restaurant.id);
+			})
+			.catch(() => {
+				toast.error("Unable to update the order status right now.");
+			})
+			.finally(() => {
+				setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+			});
+	};
+
+	const handleMarkReadyForPickup = (orderId: string) => {
+		if (!restaurant?.id) return;
+
+		setProcessingOrderIds((prev) => [...prev, orderId]);
+
+		void runtime
+			.runPromise(
+				Effect.gen(function* () {
+					const api = yield* OrderApi;
+					return yield* api.markReadyForPickup(orderId, restaurant.id);
+				}),
+			)
+			.then(() => {
+				toast.success("Order marked as ready for pickup");
+				loadOrders(restaurant.id);
+			})
+			.catch(() => {
+				toast.error("Unable to update the order status right now.");
+			})
+			.finally(() => {
+				setProcessingOrderIds((prev) => prev.filter((id) => id !== orderId));
+			});
+	};
 
 	const quickActions = [
 		{
@@ -223,6 +349,124 @@ export default function VendorDashboardPage() {
 							<div className="mt-4 rounded-2xl border border-dashed border-brand/30 bg-brand/5 px-4 py-5 text-sm text-muted-foreground">
 								Create your restaurant listing to start receiving orders and
 								managing your menu.
+							</div>
+						)}
+					</CardContent>
+				</Card>
+
+				<Card className="mt-6 border-border/60">
+					<CardContent className="p-5">
+						<div className="flex items-center justify-between gap-3">
+							<div>
+								<p className="text-sm font-semibold text-foreground">
+									Orders queue
+								</p>
+								<p className="text-xs text-muted-foreground">
+									{restaurant
+										? "Incoming orders for your restaurant"
+										: "Set up a restaurant to see incoming orders"}
+								</p>
+							</div>
+							{restaurant ? (
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => loadOrders(restaurant.id)}
+									disabled={ordersLoading}
+								>
+									Refresh
+								</Button>
+							) : null}
+						</div>
+
+						{!restaurant ? (
+							<div className="mt-4 rounded-2xl border border-dashed border-brand/30 bg-brand/5 px-4 py-5 text-sm text-muted-foreground">
+								Create your restaurant listing to start receiving orders.
+							</div>
+						) : ordersLoading ? (
+							<div className="mt-4 space-y-3">
+								{[1, 2].map((i) => (
+									<div
+										key={i}
+										className="h-20 animate-pulse rounded-2xl bg-muted"
+									/>
+								))}
+							</div>
+						) : orders.length === 0 ? (
+							<div className="mt-4 rounded-2xl bg-muted/50 px-4 py-5 text-sm text-muted-foreground">
+								No orders yet.
+							</div>
+						) : (
+							<div className="mt-4 space-y-3">
+								{orders.map((order) => (
+									<div
+										key={order.id}
+										className="rounded-2xl border border-border/60 bg-muted/20 p-4"
+									>
+										<div className="flex items-start justify-between gap-3">
+											<div>
+												<p className="text-sm font-semibold text-foreground">
+													Order #{order.id.slice(0, 8)}
+												</p>
+												<p className="text-xs text-muted-foreground">
+													{order.itemCount} items • {order.paymentMethod}
+												</p>
+											</div>
+											<Badge variant="outline" className="shrink-0">
+												{order.status}
+											</Badge>
+										</div>
+
+										<div className="mt-3 flex items-center justify-between gap-3">
+											<span className="text-sm font-semibold text-foreground">
+												₦{Number(order.totalPrice).toLocaleString()}
+											</span>
+											<div className="flex flex-wrap justify-end gap-2">
+												{["pending", "placed"].includes(
+													order.status.toLowerCase(),
+												) ? (
+													<>
+														<Button
+															size="sm"
+															onClick={() => handleAcceptOrder(order.id)}
+															disabled={processingOrderIds.includes(order.id)}
+														>
+															Accept
+														</Button>
+														<Button
+															variant="outline"
+															size="sm"
+															onClick={() => handleRejectOrder(order.id)}
+															disabled={processingOrderIds.includes(order.id)}
+														>
+															Reject
+														</Button>
+													</>
+												) : null}
+
+												{order.status.toLowerCase() === "accepted" ? (
+													<Button
+														size="sm"
+														onClick={() => handleMarkPreparing(order.id)}
+														disabled={processingOrderIds.includes(order.id)}
+													>
+														Mark preparing
+													</Button>
+												) : null}
+
+												{order.status.toLowerCase() === "preparing" ? (
+													<Button
+														size="sm"
+														onClick={() => handleMarkReadyForPickup(order.id)}
+														disabled={processingOrderIds.includes(order.id)}
+													>
+														Mark ready for pickup
+													</Button>
+												) : null}
+											</div>
+										</div>
+									</div>
+								))}
 							</div>
 						)}
 					</CardContent>
